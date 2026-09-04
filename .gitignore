@@ -1,0 +1,40 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment Variables & Sensitive Credentials
+.env
+.env.local
+.env.*.local
+
+# AI Models & Large Binary Weights
+models/
+*.bin
+*.pt
+*.pth
+*.onnx
+*.safetensors
+
+# Temporary cache, recordings & downloads
+temp/
+*.wav
+*.mp3
+*.webm
+*.ogg
+
+# Voice Profiles & Biometric Embeddings (Keep private)
+voice_profile/*.npy
+voice_profile/*.wav
+!voice_profile/.gitkeep
+
+# IDE & OS Specific
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+
+# Installer binaries & cloudflared
+temp/cloudflared.exe
+*.exe

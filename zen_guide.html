@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Z.E.N. // Autonomous Multimodal System Controller</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@300;400;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #050811;
+            --bg-card: rgba(13, 19, 36, 0.7);
+            --bg-card-hover: rgba(20, 30, 58, 0.85);
+            --border-glow: rgba(0, 240, 255, 0.25);
+            --border-dim: rgba(255, 255, 255, 0.08);
+            --accent-cyan: #00f0ff;
+            --accent-blue: #0070f3;
+            --accent-violet: #8a2be2;
+            --accent-emerald: #00ff88;
+            --accent-amber: #ffb703;
+            --text-primary: #f0f6fc;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --font-main: 'Outfit', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+            --font-body: 'Plus Jakarta Sans', sans-serif;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: var(--font-body);
+            line-height: 1.6;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 15% 15%, rgba(0, 240, 255, 0.07) 0%, transparent 40%),
+                radial-gradient(circle at 85% 30%, rgba(138, 43, 226, 0.08) 0%, transparent 40%),
+                radial-gradient(circle at 50% 80%, rgba(0, 112, 243, 0.06) 0%, transparent 50%);
+            background-attachment: fixed;
+        }
+
+        /* Ambient glowing grid background */
+        body::before {
+            content: "";
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background-size: 50px 50px;
+            background-image: 
+                linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .container {
+            max-width: 1240px;
+            margin: 0 auto;
+            padding: 40px 24px 80px 24px;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Header & Hero Section */
+        header {
+            text-align: center;
+            margin-bottom: 60px;
+            padding-top: 20px;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(0, 240, 255, 0.1);
+            border: 1px solid var(--border-glow);
+            padding: 6px 16px;
+            border-radius: 9999px;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--accent-cyan);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 20px;
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.15);
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--accent-cyan);
+            border-radius: 50%;
+            box-shadow: 0 0 10px var(--accent-cyan);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); opacity: 0.8; }
+            50% { transform: scale(1.3); opacity: 1; filter: drop-shadow(0 0 6px var(--accent-cyan)); }
+            100% { transform: scale(0.95); opacity: 0.8; }
+        }
+
+        h1 {
+            font-family: var(--font-main);
+            font-size: 3.6rem;
+            font-weight: 900;
+            letter-spacing: -0.03em;
+            background: linear-gradient(135deg, #ffffff 30%, var(--accent-cyan) 80%, var(--accent-blue) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 16px;
+            line-height: 1.1;
+        }
+
+        .subtitle {
+            font-size: 1.25rem;
+            color: var(--text-secondary);
+            max-width: 780px;
+            margin: 0 auto;
+            font-weight: 400;
+        }
+
+        .owner-tag {
+            margin-top: 14px;
+            display: inline-block;
+            font-family: var(--font-mono);
+            font-size: 0.95rem;
+            color: var(--accent-amber);
+            background: rgba(255, 183, 3, 0.1);
+            padding: 4px 14px;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 183, 3, 0.3);
+        }
+
+        /* Navigation Pills */
+        .nav-bar {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            margin-bottom: 50px;
+            flex-wrap: wrap;
+        }
+
+        .nav-btn {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border-dim);
+            color: var(--text-secondary);
+            padding: 10px 20px;
+            border-radius: 12px;
+            font-family: var(--font-main);
+            font-size: 0.95rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.25s ease;
+            backdrop-filter: blur(10px);
+        }
+
+        .nav-btn:hover {
+            background: rgba(0, 240, 255, 0.15);
+            border-color: var(--accent-cyan);
+            color: #ffffff;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(0, 240, 255, 0.15);
+        }
+
+        /* Glass Cards & Grid */
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+            gap: 24px;
+            margin-bottom: 30px;
+        }
+
+        .grid-3 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+            margin-bottom: 30px;
+        }
+
+        .glass-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-dim);
+            border-radius: 20px;
+            padding: 30px;
+            backdrop-filter: blur(16px);
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .glass-card:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-glow);
+            transform: translateY(-4px);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(0, 240, 255, 0.1);
+        }
+
+        .glass-card::before {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; right: 0; height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.4), transparent);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .glass-card:hover::before {
+            opacity: 1;
+        }
+
+        .card-icon {
+            font-size: 2rem;
+            margin-bottom: 16px;
+            display: inline-block;
+        }
+
+        .card-title {
+            font-family: var(--font-main);
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .card-desc {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            margin-bottom: 20px;
+        }
+
+        /* Chips & Tags */
+        .chip-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .chip {
+            background: rgba(0, 240, 255, 0.08);
+            border: 1px solid rgba(0, 240, 255, 0.2);
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--accent-cyan);
+        }
+
+        .chip-emerald {
+            background: rgba(0, 255, 136, 0.08);
+            border-color: rgba(0, 255, 136, 0.25);
+            color: var(--accent-emerald);
+        }
+
+        .chip-amber {
+            background: rgba(255, 183, 3, 0.08);
+            border-color: rgba(255, 183, 3, 0.25);
+            color: var(--accent-amber);
+        }
+
+        /* Code Block & Terminal View */
+        .terminal-box {
+            background: #02040a;
+            border: 1px solid var(--border-dim);
+            border-radius: 14px;
+            padding: 20px;
+            font-family: var(--font-mono);
+            font-size: 0.88rem;
+            color: #38bdf8;
+            position: relative;
+            margin: 16px 0;
+            overflow-x: auto;
+        }
+
+        .terminal-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .term-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+        .term-dot.red { background: #ff5f56; }
+        .term-dot.yellow { background: #ffbd2e; }
+        .term-dot.green { background: #27c93f; }
+
+        .term-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-left: 8px;
+            text-transform: uppercase;
+        }
+
+        /* Tables */
+        .table-wrap {
+            overflow-x: auto;
+            border-radius: 12px;
+            border: 1px solid var(--border-dim);
+            margin-top: 16px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 0.92rem;
+        }
+
+        th {
+            background: rgba(255, 255, 255, 0.04);
+            padding: 14px 18px;
+            color: var(--text-secondary);
+            font-family: var(--font-main);
+            font-weight: 600;
+            border-bottom: 1px solid var(--border-dim);
+        }
+
+        td {
+            padding: 14px 18px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            color: var(--text-primary);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr:hover td {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        /* Workflow Step Indicator */
+        .workflow-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            position: relative;
+            padding-left: 30px;
+            margin: 24px 0;
+        }
+
+        .workflow-steps::before {
+            content: "";
+            position: absolute;
+            top: 10px; left: 8px; bottom: 10px; width: 2px;
+            background: linear-gradient(to bottom, var(--accent-cyan), var(--accent-blue), var(--accent-violet));
+        }
+
+        .step-item {
+            position: relative;
+        }
+
+        .step-item::before {
+            content: "";
+            position: absolute;
+            left: -30px; top: 6px;
+            width: 14px; height: 14px;
+            border-radius: 50%;
+            background: var(--bg-primary);
+            border: 3px solid var(--accent-cyan);
+            box-shadow: 0 0 10px var(--accent-cyan);
+        }
+
+        .step-title {
+            font-family: var(--font-main);
+            font-weight: 700;
+            font-size: 1.1rem;
+            color: #ffffff;
+            margin-bottom: 4px;
+        }
+
+        .step-desc {
+            font-size: 0.92rem;
+            color: var(--text-secondary);
+        }
+
+        /* Search Filter Box */
+        .filter-input {
+            width: 100%;
+            padding: 14px 20px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-dim);
+            border-radius: 12px;
+            color: #ffffff;
+            font-family: var(--font-body);
+            font-size: 1rem;
+            margin-bottom: 20px;
+            outline: none;
+            transition: all 0.25s ease;
+        }
+
+        .filter-input:focus {
+            border-color: var(--accent-cyan);
+            background: rgba(0, 240, 255, 0.05);
+            box-shadow: 0 0 15px rgba(0, 240, 255, 0.2);
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            margin-top: 80px;
+            padding-top: 30px;
+            border-top: 1px solid var(--border-dim);
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            font-family: var(--font-mono);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            h1 { font-size: 2.5rem; }
+            .grid-2, .grid-3 { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        
+        <!-- Header -->
+        <header>
+            <div class="badge">
+                <div class="pulse-dot"></div>
+                SYSTEM ONLINE // CORE v2.5
+            </div>
+            <h1>Z.E.N. SYSTEM GUIDE</h1>
+            <p class="subtitle">Zero-latency Executive Neural-network // Autonomous Multimodal Desktop Agent</p>
+            <div class="owner-tag">👑 MASTER & OWNER: SIR ABDULLAH IRFAN</div>
+        </header>
+
+        <!-- Navigation -->
+        <div class="nav-bar">
+            <a href="#overview" class="nav-btn">Architecture & Core</a>
+            <a href="#wakewords" class="nav-btn">Wake Words</a>
+            <a href="#latency" class="nav-btn">Sub-Second Pipeline</a>
+            <a href="#multikey" class="nav-btn">Multi-Key Fallback</a>
+            <a href="#tools" class="nav-btn">System Tools</a>
+            <a href="#voiceprofile" class="nav-btn">Voice Flexibility</a>
+            <a href="#launcher" class="nav-btn">Run & Setup</a>
+        </div>
+
+        <!-- Section 1: Core Architecture -->
+        <section id="overview" class="glass-card" style="margin-bottom: 30px;">
+            <div class="card-icon">⚡</div>
+            <h2 class="card-title">Dual-Engine Intelligent Architecture</h2>
+            <p class="card-desc">
+                ZEN is built with an ultra-fast hybrid architecture that combines <strong>Groq LPU Instant Processing (&lt;150ms)</strong> for natural conversational reasoning & OS command execution, with <strong>Google Gemini Flash</strong> for deep visual perception and full multi-turn planning.
+            </p>
+
+            <div class="grid-3">
+                <div style="background: rgba(255,255,255,0.02); padding: 18px; border-radius: 12px; border: 1px solid var(--border-dim);">
+                    <h4 style="color: var(--accent-cyan); margin-bottom: 8px;">1. Groq LPU Fast-Path</h4>
+                    <p style="font-size: 0.88rem; color: var(--text-secondary);">Executes system actions, Git status, app launches, audio control, and Urdu/Hindi conversational dialogue in <strong>sub-second latency (~1.5s total roundtrip)</strong>.</p>
+                </div>
+                <div style="background: rgba(255,255,255,0.02); padding: 18px; border-radius: 12px; border: 1px solid var(--border-dim);">
+                    <h4 style="color: var(--accent-blue); margin-bottom: 8px;">2. Multimodal Vision</h4>
+                    <p style="font-size: 0.88rem; color: var(--text-secondary);">Activated automatically when you say <em>"screen dekho"</em> or <em>"look at error"</em>. Captures high-speed JPEG stream to inspect code, errors, and charts.</p>
+                </div>
+                <div style="background: rgba(255,255,255,0.02); padding: 18px; border-radius: 12px; border: 1px solid var(--border-dim);">
+                    <h4 style="color: var(--accent-emerald); margin-bottom: 8px;">3. Groq STT & Neural TTS</h4>
+                    <p style="font-size: 0.88rem; color: var(--text-secondary);">Groq Whisper-Large-v3-Turbo captures speech in 150ms. Edge-TTS plays Tony Stark style Hindi/Urdu voice with calibrated <code>-4Hz</code> pitch.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 2: Wake Words & Identity -->
+        <div class="grid-2" id="wakewords">
+            <div class="glass-card">
+                <div class="card-icon">🎙️</div>
+                <h3 class="card-title">Configured Wake Words</h3>
+                <p class="card-desc">ZEN listens continuously in background and wakes up instantly on any of the following triggers:</p>
+                
+                <div class="chip-group">
+                    <span class="chip">ZEN</span>
+                    <span class="chip">XZEN</span>
+                    <span class="chip">ZZEN</span>
+                    <span class="chip">ENN</span>
+                    <span class="chip">Hey Zen</span>
+                    <span class="chip">Hi Zen</span>
+                    <span class="chip">Hey Xzen</span>
+                    <span class="chip">Hey Zzen</span>
+                    <span class="chip">Hey Enn</span>
+                    <span class="chip">زین</span>
+                    <span class="chip">ایکس زین</span>
+                    <span class="chip">ज़ेन</span>
+                    <span class="chip">ज़ैन</span>
+                </div>
+
+                <div class="terminal-box" style="margin-top: 20px;">
+                    <div class="terminal-header">
+                        <span class="term-dot red"></span>
+                        <span class="term-dot yellow"></span>
+                        <span class="term-dot green"></span>
+                        <span class="term-label">Single-Wake Response</span>
+                    </div>
+                    <div>&gt; [You]: "Zen"</div>
+                    <div style="color: var(--accent-cyan);">&gt; [ZEN]: "सर, ज़ेन आपकी सेवा में उपस्थित है। आज्ञा दीजिए?"</div>
+                </div>
+            </div>
+
+            <div class="glass-card">
+                <div class="card-icon">👑</div>
+                <h3 class="card-title">Master Identity & Context</h3>
+                <p class="card-desc">ZEN is bound to Sir Abdullah Irfan with loyalty protocols:</p>
+                
+                <ul style="list-style: none; padding-left: 0; color: var(--text-secondary); font-size: 0.92rem; display: flex; flex-direction: column; gap: 10px;">
+                    <li>🔹 <strong>Owner:</strong> Sir Abdullah Irfan (अब्दुल्ला इरफ़ान / عبداللہ عرفان).</li>
+                    <li>🔹 <strong>"Mein / Mera" Recognition:</strong> When you refer to <em>"mein"</em>, <em>"mera WhatsApp"</em>, or <em>"mera account"</em>, ZEN resolves this directly to Sir Abdullah.</li>
+                    <li>🔹 <strong>Language Default:</strong> Replies in respectful, natural Urdu / Hindi by default. Speaks English only when addressed in English.</li>
+                    <li>🔹 <strong>Mannerism:</strong> Calm, witty, confident Tony Stark AI style.</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Section 3: Sub-Second Execution Pipeline -->
+        <section id="latency" class="glass-card" style="margin-bottom: 30px;">
+            <div class="card-icon">🏎️</div>
+            <h2 class="card-title">Real-Time Execution Pipeline (Siri & Gemini Live Feel)</h2>
+            <p class="card-desc">How ZEN achieves sub-second live response speeds instead of 20-30s wait times:</p>
+
+            <div class="workflow-steps">
+                <div class="step-item">
+                    <div class="step-title">1. Smart VAD & Groq STT (150ms)</div>
+                    <div class="step-desc">Microphone captures speech using low-latency VAD (0.8s silence threshold). Audio is transcribed via Groq Whisper Turbo in 150ms without silence hallucinations.</div>
+                </div>
+                <div class="step-item">
+                    <div class="step-title">2. Intent Router & Direct Fast-Path (120ms)</div>
+                    <div class="step-desc">System detects if screen vision is asked. If not, it routes directly to Groq LPU with zero screenshot overhead, eliminating 429 quota exhaustion.</div>
+                </div>
+                <div class="step-item">
+                    <div class="step-title">3. Parallel Tool Execution & Spoken Response (300ms)</div>
+                    <div class="step-desc">Executes Windows OS actions (closing apps, fetching Git, setting volume) and returns clear Urdu/Hindi spoken feedback immediately.</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 4: Multi-Key Rotation -->
+        <section id="multikey" class="glass-card" style="margin-bottom: 30px;">
+            <div class="card-icon">🔑</div>
+            <h2 class="card-title">Multi-Key Auto-Rotation & Fallback</h2>
+            <p class="card-desc">Eliminate Google AI Studio 20 req/day quota limits with automatic key failover:</p>
+
+            <div class="terminal-box">
+                <div class="terminal-header">
+                    <span class="term-dot red"></span>
+                    <span class="term-dot yellow"></span>
+                    <span class="term-dot green"></span>
+                    <span class="term-label">.env Configuration</span>
+                </div>
+                <div><span style="color: #64748b;"># Primary Gemini Key</span></div>
+                <div>GEMINI_API_KEY=AIzaSyPrimaryApiKey...</div>
+                <div style="margin-top: 6px;"><span style="color: #64748b;"># Secondary & Tertiary Backup Keys</span></div>
+                <div>GEMINI_API_KEY_2=AIzaSySecondaryBackupKey...</div>
+                <div>GEMINI_API_KEY_3=AIzaSyThirdBackupKey...</div>
+            </div>
+
+            <p style="font-size: 0.9rem; color: var(--text-secondary); margin-top: 10px;">
+                ✓ <strong>Instant Switch:</strong> When Key 1 hits a <code>429 RESOURCE_EXHAUSTED</code>, ZEN switches to Key 2 without waiting.<br>
+                ✓ <strong>Persistent Index:</strong> Next queries start directly from Key 2.<br>
+                ✓ <strong>Zero Downtime:</strong> If all Gemini keys are exhausted, Groq LPU handles tasks seamlessly.
+            </p>
+        </section>
+
+        <!-- Section 5: Voice Profile Flexibility -->
+        <section id="voiceprofile" class="glass-card" style="margin-bottom: 30px;">
+            <div class="card-icon">👥</div>
+            <h2 class="card-title">Voice Profile & Open Access Mode</h2>
+            <p class="card-desc">How speaker verification behaves dynamically:</p>
+
+            <div class="grid-2">
+                <div style="background: rgba(0, 255, 136, 0.04); border: 1px solid rgba(0, 255, 136, 0.2); padding: 20px; border-radius: 12px;">
+                    <h4 style="color: var(--accent-emerald); margin-bottom: 8px;">🔓 Open Mode (Default - Empty Voice Profile)</h4>
+                    <p style="font-size: 0.9rem; color: var(--text-secondary);">
+                        When <code>voice_profile/</code> folder is empty, biometric speaker verification remains <strong>unrestricted</strong>. ZEN accepts commands from anyone cleanly without blocking.
+                    </p>
+                </div>
+                <div style="background: rgba(0, 240, 255, 0.04); border: 1px solid rgba(0, 240, 255, 0.2); padding: 20px; border-radius: 12px;">
+                    <h4 style="color: var(--accent-cyan); margin-bottom: 8px;">🔒 Biometric Lock Mode (Optional)</h4>
+                    <p style="font-size: 0.9rem; color: var(--text-secondary);">
+                        If you record samples into <code>voice_profile/</code> using <code>record_master_voice.py</code>, ZEN locks itself strictly to Sir Abdullah's voice, ignoring background speakers.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 6: Available Tools -->
+        <section id="tools" class="glass-card" style="margin-bottom: 30px;">
+            <div class="card-icon">🛠️</div>
+            <h2 class="card-title">Interactive Tool Directory & Commands</h2>
+            <p class="card-desc">Type below to filter commands and capabilities:</p>
+
+            <input type="text" id="cmdFilter" class="filter-input" placeholder="Type to filter commands (e.g. git, close, volume, whatsapp, screen)..." onkeyup="filterTools()">
+
+            <div class="table-wrap">
+                <table id="toolsTable">
+                    <thead>
+                        <tr>
+                            <th>Tool Name</th>
+                            <th>Voice Command Examples</th>
+                            <th>Action Performed</th>
+                            <th>Latency</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>close_application</code></td>
+                            <td>"Zen GitHub Desktop ko close krdo"<br>"Zen Chrome close kardo"</td>
+                            <td>Instantly closes target desktop app or process</td>
+                            <td><span class="chip chip-emerald">&lt; 1.5s</span></td>
+                        </tr>
+                        <tr>
+                            <td><code>check_git_repo_status</code></td>
+                            <td>"Zen open repo ko fetch krke btao koi pull aya he"</td>
+                            <td>Runs git fetch & checks if remote commits are pending</td>
+                            <td><span class="chip chip-emerald">&lt; 1.6s</span></td>
+                        </tr>
+                        <tr>
+                            <td><code>manage_windows_power</code></td>
+                            <td>"Zen screen lock kardo"<br>"Zen PC sleep kardo"</td>
+                            <td>Locks workstation, puts PC to sleep, or manages shutdown</td>
+                            <td><span class="chip chip-emerald">&lt; 1.0s</span></td>
+                        </tr>
+                        <tr>
+                            <td><code>unlock_workstation</code></td>
+                            <td>"Zen screen unlock kardo"<br>"Zen system on kardo"</td>
+                            <td>Wakes display and inputs configured PIN from .env to unlock Windows</td>
+                            <td><span class="chip chip-emerald">&lt; 1.5s</span></td>
+                        </tr>
+                        <tr>
+                            <td><code>open_url_or_application</code></td>
+                            <td>"Zen YouTube open karo"<br>"Zen Calculator kholo"</td>
+                            <td>Launches browser URLs or Windows programs</td>
+                            <td><span class="chip chip-emerald">&lt; 1.2s</span></td>
+                        </tr>
+                        <tr>
+                            <td><code>execute_terminal_command</code></td>
+                            <td>"Zen check python version"<br>"Zen run npm test"</td>
+                            <td>Executes safe shell commands in workspace</td>
+                            <td><span class="chip chip-emerald">&lt; 1.8s</span></td>
+                        </tr>
+                        <tr>
+                            <td><code>send_whatsapp_message</code></td>
+                            <td>"Zen WhatsApp par John ko hello bhejo"</td>
+                            <td>Types & sends message to WhatsApp contact</td>
+                            <td><span class="chip chip-amber">~ 3.0s</span></td>
+                        </tr>
+                        <tr>
+                            <td><code>send_antigravity_command</code></td>
+                            <td>"Zen Antigravity par backtest start kardo"</td>
+                            <td>Focuses Antigravity IDE and types prompt</td>
+                            <td><span class="chip chip-amber">~ 2.5s</span></td>
+                        </tr>
+                        <tr>
+                            <td><code>screen_vision</code></td>
+                            <td>"Zen screen dekho kya error hai"<br>"Zen ye chart check karo"</td>
+                            <td>Captures screen image & analyzes visually with Gemini</td>
+                            <td><span class="chip chip-amber">~ 3.5s</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Section 7: Launcher -->
+        <section id="launcher" class="glass-card">
+            <div class="card-icon">🚀</div>
+            <h2 class="card-title">How to Launch ZEN</h2>
+            <p class="card-desc">Double click the launcher shortcut on your Desktop or run via terminal:</p>
+
+            <div class="terminal-box">
+                <div class="terminal-header">
+                    <span class="term-dot red"></span>
+                    <span class="term-dot yellow"></span>
+                    <span class="term-dot green"></span>
+                    <span class="term-label">Launch Commands</span>
+                </div>
+                <div>&gt; Desktop: Double-click <strong>run.bat</strong></div>
+                <div>&gt; PowerShell: <code>cd F:\Agent; .\run.bat</code></div>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer>
+            Z.E.N. // Zero-latency Executive Neural-network &copy; 2026<br>
+            Designed exclusively for Sir Abdullah Irfan.
+        </footer>
+
+    </div>
+
+    <script>
+        function filterTools() {
+            const query = document.getElementById('cmdFilter').value.toLowerCase();
+            const rows = document.querySelectorAll('#toolsTable tbody tr');
+            rows.forEach(row => {
+                const text = row.innerText.toLowerCase();
+                row.style.display = text.includes(query) ? '' : 'none';
+            });
+        }
+    </script>
+</body>
+</html>
