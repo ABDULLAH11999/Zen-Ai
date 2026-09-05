@@ -1070,6 +1070,61 @@ def open_url_or_application(target: str) -> Dict[str, Any]:
             "terminal": ["cmd.exe", "/c", "start", "", "wt"],
         }
         
+        # 1. GTA 5 / GTA V Specific Launch Handler (PlayGTAV.exe)
+        gta_keywords = ["gta 5", "gta v", "gta5", "gtav", "gta", "playgtav", "grand theft auto", "grand theft auto 5", "grand theft auto v", "grand theft auto vi"]
+        if any(kw == t_lower or kw in t_lower for kw in gta_keywords):
+            play_gta_exe = r"F:\Games\Grand Theft Auto V\PlayGTAV.exe"
+            gta_dir = r"F:\Games\Grand Theft Auto V"
+            desktop_lnk = r"C:\Users\Public\Desktop\Grand Theft Auto VI.lnk"
+            
+            if os.path.exists(play_gta_exe):
+                subprocess.Popen([play_gta_exe], cwd=gta_dir, shell=True)
+                return {
+                    "status": "success",
+                    "executable": play_gta_exe,
+                    "message": "Sir, GTA V PlayGTAV.exe ke zariye launch kardiya hai."
+                }
+            elif os.path.exists(desktop_lnk):
+                try:
+                    os.startfile(desktop_lnk)
+                    return {
+                        "status": "success",
+                        "shortcut": desktop_lnk,
+                        "message": "Sir, Desktop shortcut se GTA V launch kardiya hai."
+                    }
+                except Exception:
+                    subprocess.Popen(["cmd.exe", "/c", "start", "", desktop_lnk], shell=True)
+                    return {"status": "success", "message": "Sir, GTA V launch kardiya hai."}
+                    
+        # 2. Spider-Man Game Handler
+        if any(sk in t_lower for sk in ["spider-man", "spiderman", "spider man"]):
+            spiderman_lnk = os.path.expandvars(r"C:\Users\%USERNAME%\Desktop\Spider-Man.lnk")
+            spiderman_dir = r"F:\Games\Marvels Spider-Man Remastered"
+            if os.path.exists(spiderman_lnk):
+                os.startfile(spiderman_lnk)
+                return {"status": "success", "message": "Sir, Spider-Man Remastered launch kardiya hai."}
+            elif os.path.exists(spiderman_dir):
+                for f in os.listdir(spiderman_dir):
+                    if f.endswith(".exe") and "unins" not in f.lower():
+                        subprocess.Popen([os.path.join(spiderman_dir, f)], cwd=spiderman_dir, shell=True)
+                        return {"status": "success", "message": "Sir, Spider-Man launch kardiya hai."}
+
+        # 3. Dynamic Desktop Shortcuts (.lnk) Search
+        desktops = [os.path.expandvars(r"C:\Users\%USERNAME%\Desktop"), r"C:\Users\Public\Desktop"]
+        clean_q = t_lower.replace(" ", "").replace("-", "").replace("_", "")
+        for d in desktops:
+            if os.path.exists(d):
+                for f in os.listdir(d):
+                    if f.lower().endswith(".lnk") or f.lower().endswith(".bat"):
+                        base_name = os.path.splitext(f)[0].lower().replace(" ", "").replace("-", "").replace("_", "")
+                        if clean_q in base_name or base_name in clean_q:
+                            full_lnk = os.path.join(d, f)
+                            try:
+                                os.startfile(full_lnk)
+                            except Exception:
+                                subprocess.Popen(["cmd.exe", "/c", "start", "", full_lnk], shell=True)
+                            return {"status": "success", "message": f"Sir, Desktop se {os.path.splitext(f)[0]} launch kardiya hai."}
+
         if t_lower in app_map:
             cmd = app_map[t_lower]
             subprocess.Popen(cmd, shell=True)

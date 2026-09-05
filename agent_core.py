@@ -117,11 +117,11 @@ class JarvisAgent:
                     "type": "function",
                     "function": {
                         "name": "open_url_or_application",
-                        "description": "Opens a URL in the default browser or launches an application.",
+                        "description": "Opens a URL in the default browser, launches an application, desktop shortcut, or game (e.g. GTA 5, GTA V, Spider-Man, Chrome, VS Code). Call immediately when user asks 'gta 5 launch krdo', 'gta v lga do', 'gta open karo', 'open youtube', etc.",
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "target": {"type": "string", "description": "The URL (https://...) or application name"}
+                                "target": {"type": "string", "description": "The URL (https://...), game name ('gta 5', 'spider-man'), or application name."}
                             },
                             "required": ["target"]
                         }
@@ -501,6 +501,15 @@ class JarvisAgent:
             "chart dekho", "image dekho", "error dekho", "screen analysis"
         ]
         needs_vision = any(trigger in lower_prompt for trigger in vision_triggers)
+        
+        # Zero-latency immediate intent triggers (<20ms)
+        if any(g in lower_prompt for g in ["gta 5", "gta v", "gta5", "gtav", "playgtav", "grand theft auto"]) and any(act in lower_prompt for act in ["launch", "open", "kholo", "lga", "laga", "chala", "run", "play"]):
+            res = TOOL_REGISTRY["open_url_or_application"](target="gta 5")
+            return res.get("message", "Sir, GTA V PlayGTAV.exe ke zariye launch kardiya hai.")
+            
+        if any(w in lower_prompt for w in ["chrome pe konse tabs", "chrome ke tabs", "konse tabs on", "browser ke tabs", "chrome tabs"]):
+            res = TOOL_REGISTRY["get_open_browser_tabs"](browser_name="chrome")
+            return res.get("spoken_summary", res.get("message", "Sir, Chrome ke tabs retrieve karliye hain."))
         
         # 1. Fast Path for instantaneous sub-second execution (non-vision queries & actions)
         if not needs_vision and config.GROQ_API_KEY:
