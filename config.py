@@ -59,11 +59,11 @@ class Config:
     # Language & Persona Settings (urdu as #1 top priority, hindi/english fallback)
     JARVIS_LANGUAGE: str = os.getenv("JARVIS_LANGUAGE", "urdu").lower()
     
-    # Edge TTS Settings (Fast, responsive ZEN Voice in Urdu)
+    # Edge TTS Settings (Hindi voice hi-IN-MadhurNeural for crystal-clear speaker pronunciation)
     TTS_VOICE_URDU: str = os.getenv("TTS_VOICE_URDU", "ur-PK-AsadNeural")
     TTS_VOICE_HINDI: str = os.getenv("TTS_VOICE_HINDI", "hi-IN-MadhurNeural")
     TTS_VOICE_ENGLISH: str = os.getenv("TTS_VOICE_ENGLISH", "en-GB-RyanNeural")
-    TTS_VOICE: str = os.getenv("TTS_VOICE", TTS_VOICE_URDU if JARVIS_LANGUAGE == "urdu" else (TTS_VOICE_HINDI if JARVIS_LANGUAGE == "hindi" else TTS_VOICE_ENGLISH))
+    TTS_VOICE: str = os.getenv("TTS_VOICE", TTS_VOICE_HINDI)
     TTS_RATE: str = os.getenv("TTS_RATE", "+5%")
     TTS_PITCH: str = os.getenv("TTS_PITCH", "-2Hz")
     

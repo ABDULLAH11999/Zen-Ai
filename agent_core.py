@@ -327,6 +327,22 @@ class JarvisAgent:
                             "properties": {}
                         }
                     }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_open_browser_tabs",
+                        "description": "Inspects open tabs, web pages, and URLs currently active in Google Chrome or Microsoft Edge. Call immediately when user asks 'chrome pe konse tabs on hein', 'chrome ke tabs dikhao', 'browser mein kya khula hai', etc.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "browser_name": {
+                                    "type": "string",
+                                    "description": "Browser name: 'chrome' (default) or 'edge'."
+                                }
+                            }
+                        }
+                    }
                 }
             ]
             

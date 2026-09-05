@@ -49,9 +49,9 @@ async def generate_tts_base64(text: str) -> Optional[str]:
     try:
         import edge_tts
         voices_to_try = [
-            getattr(config, "TTS_VOICE_URDU", "ur-PK-AsadNeural"),
             getattr(config, "TTS_VOICE_HINDI", "hi-IN-MadhurNeural"),
-            "ur-PK-UzmaNeural",
+            "hi-IN-SwaraNeural",
+            getattr(config, "TTS_VOICE_URDU", "ur-PK-AsadNeural"),
             "en-GB-RyanNeural"
         ]
         

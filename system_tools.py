@@ -1125,6 +1125,101 @@ def search_and_open_in_browser(query: str, search_type: str = "web") -> Dict[str
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
+def get_open_browser_tabs(browser_name: str = "chrome") -> Dict[str, Any]:
+    """
+    Inspects active open tabs, web pages, and recent URLs in Google Chrome, Microsoft Edge, or Brave browser.
+    Returns list of open tabs and a polite spoken summary.
+    """
+    import glob
+    import sqlite3
+    import shutil
+    import tempfile
+    import psutil
+    
+    b_lower = browser_name.lower()
+    proc_name = "chrome.exe" if "chrome" in b_lower else ("msedge.exe" if "edge" in b_lower else "brave.exe")
+    display_name = "Chrome" if "chrome" in b_lower else ("Edge" if "edge" in b_lower else "Brave")
+    
+    # 1. Check if browser is running
+    is_running = any(p.name().lower() == proc_name for p in psutil.process_iter(["name"]))
+    if not is_running:
+        return {
+            "status": "error",
+            "is_running": False,
+            "message": f"Sir, {display_name} browser is waqt laptop par open nahi hai."
+        }
+        
+    user_data = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data" if "chrome" in b_lower else r"%LOCALAPPDATA%\Microsoft\Edge\User Data")
+    if not os.path.exists(user_data):
+        return {"status": "error", "message": f"Sir, {display_name} user data directory nahi mili."}
+        
+    profiles = glob.glob(os.path.join(user_data, "Profile *")) + [os.path.join(user_data, "Default")]
+    
+    def get_prof_mtime(p):
+        h = os.path.join(p, "History")
+        s = os.path.join(p, "Sessions")
+        m1 = os.path.getmtime(h) if os.path.exists(h) else 0
+        m2 = os.path.getmtime(s) if os.path.exists(s) else 0
+        return max(m1, m2)
+        
+    profiles.sort(key=get_prof_mtime, reverse=True)
+    
+    found_tabs = []
+    seen_urls = set()
+    seen_titles = set()
+    
+    for prof in profiles[:3]:
+        hist_file = os.path.join(prof, "History")
+        if os.path.exists(hist_file):
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                    tmp_path = tmp.name
+                shutil.copy2(hist_file, tmp_path)
+                conn = sqlite3.connect(tmp_path)
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT title, url FROM urls "
+                    "WHERE title != '' AND url NOT LIKE '%favicon%' AND url NOT LIKE 'chrome%' "
+                    "ORDER BY last_visit_time DESC LIMIT 15"
+                )
+                for row in cur.fetchall():
+                    title, url = str(row[0]).strip(), str(row[1]).strip()
+                    title_norm = title.lower()[:25]
+                    if url not in seen_urls and title_norm not in seen_titles and len(title) > 1:
+                        seen_urls.add(url)
+                        seen_titles.add(title_norm)
+                        found_tabs.append({"title": title, "url": url})
+                conn.close()
+            except Exception:
+                pass
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
+                        
+    if not found_tabs:
+        return {
+            "status": "success",
+            "tabs": [],
+            "message": f"Sir, {display_name} open hai lekin koi active web page ya tab nahi mila."
+        }
+        
+    top_tabs = found_tabs[:5]
+    tab_descriptions = [f"{i+1}. {t['title'][:40]}" for i, t in enumerate(top_tabs)]
+    summary = f"Sir, {display_name} mein is waqt yeh tabs open hain: " + ", ".join(tab_descriptions) + "."
+    
+    return {
+        "status": "success",
+        "is_running": True,
+        "count": len(top_tabs),
+        "tabs": top_tabs,
+        "spoken_summary": summary,
+        "message": summary
+    }
+
 # Registry mapping tool names to python callables
 TOOL_REGISTRY = {
     "execute_terminal_command": execute_terminal_command,
@@ -1151,6 +1246,7 @@ TOOL_REGISTRY = {
     "check_scalper_bot_status": check_scalper_bot_status,
     "manage_display_brightness": manage_display_brightness,
     "manage_media_playback": manage_media_playback,
+    "get_open_browser_tabs": get_open_browser_tabs,
 }
 
 # Declarations for Gemini 2.0 Function Calling
@@ -1179,4 +1275,5 @@ TOOL_DECLARATIONS = [
     check_scalper_bot_status,
     manage_display_brightness,
     manage_media_playback,
+    get_open_browser_tabs,
 ]
