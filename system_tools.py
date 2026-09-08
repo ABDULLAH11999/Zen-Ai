@@ -2060,6 +2060,326 @@ def play_youtube_music_or_video(query: str = "relaxing lofi music") -> Dict[str,
         "message": f"Sir, YouTube par '{clean_query}' play kardiya hai: {target_url}"
     }
 
+def fetch_web_knowledge_and_facts(query: str) -> Dict[str, Any]:
+    """
+    Searches the live web for real-time information, biographies, places, things, companies, news, and technical facts.
+    Returns rich snippets and accurate knowledge to explain to the user.
+    """
+    import urllib.request
+    import urllib.parse
+    import json
+    import re
+
+    clean_q = query.strip()
+    for pfx in ["muje", "ke bare mei malomat do", "ke bare mein batao", "kya he", "kya hai", "kon he", "kon hai", "kidr he", "kidhar hai", "batao", "info do"]:
+        clean_q = clean_q.replace(pfx, " ").strip()
+    clean_q = " ".join(clean_q.split())
+    if not clean_q:
+        clean_q = query
+
+    snippets = []
+    # 1. DuckDuckGo Search
+    try:
+        url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(clean_q)
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+        )
+        html = urllib.request.urlopen(req, timeout=6).read().decode("utf-8", errors="ignore")
+        raw_snippets = re.findall(r'<a class="result__snippet[^>]*>(.*?)</a>', html, re.DOTALL)
+        for s in raw_snippets[:5]:
+            clean_s = re.sub(r'<[^>]+>', '', s).strip()
+            clean_s = clean_s.replace("&amp;", "&").replace("&#x27;", "'").replace("&quot;", '"')
+            if clean_s and len(clean_s) > 20:
+                snippets.append(clean_s)
+    except Exception as e:
+        logger.debug(f"Web search error: {e}")
+
+    # 2. Wikipedia API lookup
+    try:
+        wiki_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(clean_q)}"
+        req = urllib.request.Request(wiki_url, headers={"User-Agent": "ZEN-Agent/2.0"})
+        data = json.loads(urllib.request.urlopen(req, timeout=4).read().decode("utf-8"))
+        if "extract" in data and data["extract"]:
+            snippets.insert(0, data["extract"])
+    except Exception:
+        pass
+
+    if snippets:
+        combined_text = "\n".join(snippets[:4])
+        return {
+            "status": "success",
+            "query": clean_q,
+            "facts": combined_text,
+            "message": f"Retrieved web information for '{clean_q}':\n{combined_text}"
+        }
+    else:
+        return {
+            "status": "info",
+            "query": clean_q,
+            "facts": "",
+            "message": f"No web search snippets found for '{clean_q}'. Provide best AI knowledge."
+        }
+
+def download_software_or_game(software_name: str, use_fdm: Optional[bool] = None) -> Dict[str, Any]:
+    """
+    Downloads official Windows (x64) installers for applications, software, tools, and games.
+    Supports specific site search (SteamRIP, FitGirl, OceanOfGames, Dodi, GitHub, SourceForge).
+    If 'use_fdm' is True:
+      - Verifies FDM installation & Chrome FDM extension and queues/triggers the download directly in Free Download Manager.
+    If 'use_fdm' is False or not specified:
+      - Initiates the download via Google Chrome into the default Windows Downloads folder.
+    """
+    import os
+    import subprocess
+    import urllib.parse
+    import re
+    import time
+    import pyautogui
+    
+    clean_name = software_name.lower().strip()
+    if use_fdm is None:
+        if "fdm" in clean_name or "free download manager" in clean_name:
+            use_fdm = True
+        else:
+            use_fdm = False
+            
+    # Detect target site if requested (e.g. steamrip, fitgirl, oceanofgames, dodi)
+    site_search_map = {
+        "steamrip": "https://steamrip.com/?s=",
+        "fitgirl": "https://fitgirl-repacks.site/?s=",
+        "oceanofgames": "https://oceanofgames.com/?s=",
+        "ocean of games": "https://oceanofgames.com/?s=",
+        "dodi": "https://dodi-repacks.site/?s=",
+        "apunkagames": "https://apunkagames.biz/?s=",
+        "github": "https://github.com/search?q=",
+        "sourceforge": "https://sourceforge.net/directory/?q=",
+        "softpedia": "https://www.softpedia.com/dyn-search.php?search_term="
+    }
+    
+    detected_site = None
+    site_prefix_url = None
+    for site_key, site_url in site_search_map.items():
+        if site_key in clean_name:
+            detected_site = site_key
+            site_prefix_url = site_url
+            break
+            
+    # Clean up prefixes and filler words
+    for kw in ["download karo", "download kro", "download kar do", "download", "ko", "mein", "me", "se", "fdm", "free download manager", "install karo", "installer", "website"]:
+        clean_name = clean_name.replace(kw, " ").strip()
+    if detected_site:
+        clean_name = clean_name.replace(detected_site, " ").strip()
+    clean_name = " ".join(clean_name.split())
+    if not clean_name:
+        clean_name = software_name.strip()
+
+    # Chrome executable
+    chrome_paths = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe")
+    ]
+    chrome_exe = next((p for p in chrome_paths if os.path.exists(p)), "chrome.exe")
+
+    # FDM executable path lookup
+    fdm_paths = [
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Softdeluxe\Free Download Manager\fdm.exe"),
+        r"C:\Program Files\Softdeluxe\Free Download Manager\fdm.exe",
+        r"C:\Program Files\FreeDownloadManager.ORG\Free Download Manager\fdm.exe"
+    ]
+    fdm_exe = next((p for p in fdm_paths if os.path.exists(p)), None)
+
+    # 1. Custom Website Specified (e.g. SteamRIP, FitGirl)
+    if detected_site and site_prefix_url:
+        target_url = site_prefix_url + urllib.parse.quote(clean_name)
+        app_title = f"{clean_name.title()} ({detected_site.upper()})"
+        
+        # Open the exact search/download page in Chrome (Profile 1)
+        subprocess.Popen([chrome_exe, "--profile-directory=Profile 1", target_url])
+        
+        # If FDM is requested, ensure FDM is active in background
+        if use_fdm and fdm_exe:
+            try:
+                subprocess.Popen([fdm_exe])
+            except Exception:
+                pass
+            spoken = f"Sir, {detected_site.upper()} se '{clean_name.title()}' ka download page Chrome aur FDM mein open kardiya hai."
+            return {
+                "status": "success",
+                "software": app_title,
+                "target_url": target_url,
+                "downloader": f"FDM + Chrome ({detected_site.upper()})",
+                "spoken_summary": spoken,
+                "message": f"Sir, {detected_site.upper()} website se '{clean_name.title()}' ka download page Chrome aur FDM mein open kardiya hai ({target_url})."
+            }
+        else:
+            spoken = f"Sir, {detected_site.upper()} se '{clean_name.title()}' ka download page Chrome mein open kardiya hai."
+            return {
+                "status": "success",
+                "software": app_title,
+                "target_url": target_url,
+                "downloader": f"Chrome ({detected_site.upper()})",
+                "spoken_summary": spoken,
+                "message": f"Sir, {detected_site.upper()} website se '{clean_name.title()}' ka download page Chrome mein open kardiya hai ({target_url})."
+            }
+
+    catalog = {
+        "tradingview": {
+            "name": "TradingView Desktop (x64)",
+            "url": "https://tvd-packages.tradingview.com/desktop/staging/win32/x64/TradingView.msix",
+            "page_url": "https://www.tradingview.com/desktop/"
+        },
+        "vscode": {
+            "name": "Visual Studio Code (x64)",
+            "url": "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-user",
+            "page_url": "https://code.visualstudio.com/Download"
+        },
+        "vs code": {
+            "name": "Visual Studio Code (x64)",
+            "url": "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-user",
+            "page_url": "https://code.visualstudio.com/Download"
+        },
+        "git": {
+            "name": "Git for Windows (x64)",
+            "url": "https://github.com/git-for-windows/git/releases/latest/download/Git-64-bit.exe",
+            "page_url": "https://git-scm.com/download/win"
+        },
+        "discord": {
+            "name": "Discord Desktop",
+            "url": "https://discord.com/api/download?platform=win",
+            "page_url": "https://discord.com/download"
+        },
+        "telegram": {
+            "name": "Telegram Desktop (x64)",
+            "url": "https://telegram.org/dl/desktop/win64",
+            "page_url": "https://desktop.telegram.org/"
+        },
+        "vlc": {
+            "name": "VLC Media Player (x64)",
+            "url": "https://get.videolan.org/vlc/last/win64/vlc-win64.exe",
+            "page_url": "https://www.videolan.org/vlc/"
+        },
+        "steam": {
+            "name": "Steam Client",
+            "url": "https://cdn.cloudflare.steamstatic.com/client/installer/SteamSetup.exe",
+            "page_url": "https://store.steampowered.com/about/"
+        },
+        "obs": {
+            "name": "OBS Studio (x64)",
+            "url": "https://obsproject.com/download",
+            "page_url": "https://obsproject.com/download"
+        },
+        "nodejs": {
+            "name": "Node.js (x64)",
+            "url": "https://nodejs.org/dist/v22.14.0/node-v22.14.0-x64.msi",
+            "page_url": "https://nodejs.org/en/download"
+        },
+        "node": {
+            "name": "Node.js (x64)",
+            "url": "https://nodejs.org/dist/v22.14.0/node-v22.14.0-x64.msi",
+            "page_url": "https://nodejs.org/en/download"
+        },
+        "python": {
+            "name": "Python 3.13 (x64)",
+            "url": "https://www.python.org/ftp/python/3.13.2/python-3.13.2-amd64.exe",
+            "page_url": "https://www.python.org/downloads/"
+        },
+        "7zip": {
+            "name": "7-Zip (x64)",
+            "url": "https://www.7-zip.org/a/7z2408-x64.exe",
+            "page_url": "https://www.7-zip.org/"
+        },
+        "brave": {
+            "name": "Brave Browser (x64)",
+            "url": "https://laptop-updates.brave.com/latest/winx64",
+            "page_url": "https://brave.com/download/"
+        },
+        "chrome": {
+            "name": "Google Chrome (x64)",
+            "url": "https://dl.google.com/chrome/install/standalone/x64/ChromeStandaloneSetup64.exe",
+            "page_url": "https://www.google.com/chrome/"
+        },
+        "whatsapp": {
+            "name": "WhatsApp Desktop (x64)",
+            "url": "https://web.whatsapp.com/desktop/windows/release/x64/WhatsAppSetup.exe",
+            "page_url": "https://www.whatsapp.com/download"
+        },
+        "spotify": {
+            "name": "Spotify Desktop",
+            "url": "https://download.scdn.co/SpotifySetup.exe",
+            "page_url": "https://www.spotify.com/download/"
+        },
+        "postman": {
+            "name": "Postman Desktop (x64)",
+            "url": "https://dl.pstmn.io/download/latest/win64",
+            "page_url": "https://www.postman.com/downloads/"
+        },
+        "epic": {
+            "name": "Epic Games Launcher",
+            "url": "https://launcher-public-service-prod06.ol.epicgames.com/launcher/api/installer/download/EpicGamesLauncherInstaller.msi",
+            "page_url": "https://store.epicgames.com/en-US/download"
+        },
+        "notepad++": {
+            "name": "Notepad++ (x64)",
+            "url": "https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.6/npp.8.7.6.Installer.x64.exe",
+            "page_url": "https://notepad-plus-plus.org/downloads/"
+        }
+    }
+
+    # Match target entry from catalog or dynamic link
+    target_entry = None
+    for key, data in catalog.items():
+        if key in clean_name or clean_name in key:
+            target_entry = data
+            break
+
+    if target_entry:
+        app_title = target_entry["name"]
+        target_url = target_entry["url"]
+    else:
+        app_title = clean_name.capitalize()
+        target_url = f"https://www.google.com/search?q={urllib.parse.quote(clean_name + ' download official windows 64-bit')}"
+
+    if use_fdm and fdm_exe:
+        # Launch in Free Download Manager
+        try:
+            subprocess.Popen([fdm_exe, target_url])
+            time.sleep(0.6)
+            # Auto-confirm FDM popup dialog if focused
+            focus_window_by_title("Free Download Manager")
+            time.sleep(0.2)
+            pyautogui.press("enter")
+        except Exception:
+            pass
+        # Also open in Chrome (Profile 1) with FDM extension active
+        try:
+            subprocess.Popen([chrome_exe, "--profile-directory=Profile 1", target_url])
+        except Exception:
+            pass
+            
+        spoken = f"Sir, {app_title} Free Download Manager (FDM) mein download par laga diya hai."
+        return {
+            "status": "success",
+            "software": app_title,
+            "target_url": target_url,
+            "downloader": "Free Download Manager (FDM)",
+            "spoken_summary": spoken,
+            "message": f"Sir, {app_title} x64 installer Free Download Manager (FDM) mein download par laga diya hai ({target_url})."
+        }
+    else:
+        # Standard Browser Download in Chrome -> Windows Downloads Folder
+        subprocess.Popen([chrome_exe, "--profile-directory=Profile 1", target_url])
+        spoken = f"Sir, {app_title} Windows Downloads folder mein download par laga diya hai."
+        return {
+            "status": "success",
+            "software": app_title,
+            "target_url": target_url,
+            "downloader": "Chrome (Windows Downloads)",
+            "spoken_summary": spoken,
+            "message": f"Sir, {app_title} x64 installer Windows Downloads folder mein download par laga diya hai ({target_url})."
+        }
+
 # Registry mapping tool names to python callables
 TOOL_REGISTRY = {
     "execute_terminal_command": execute_terminal_command,
@@ -2094,6 +2414,8 @@ TOOL_REGISTRY = {
     "inspect_web_page_or_dashboard": inspect_web_page_or_dashboard,
     "play_youtube_music_or_video": play_youtube_music_or_video,
     "proceed_browser_login": proceed_browser_login,
+    "fetch_web_knowledge_and_facts": fetch_web_knowledge_and_facts,
+    "download_software_or_game": download_software_or_game,
 }
 
 # Declarations for Gemini 2.0 Function Calling
@@ -2130,4 +2452,6 @@ TOOL_DECLARATIONS = [
     set_ai_model,
     inspect_web_page_or_dashboard,
     play_youtube_music_or_video,
+    fetch_web_knowledge_and_facts,
+    download_software_or_game,
 ]

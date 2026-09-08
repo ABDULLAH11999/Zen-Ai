@@ -74,20 +74,6 @@ class JarvisAgent:
                 {
                     "type": "function",
                     "function": {
-                        "name": "close_application",
-                        "description": "Closes an active desktop application by name (e.g., 'GitHub Desktop', 'Chrome', 'WhatsApp', 'GTA V', 'Notepad').",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "app_name": {"type": "string", "description": "The name of the application to close."}
-                            },
-                            "required": ["app_name"]
-                        }
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
                         "name": "check_git_repo_status",
                         "description": "Fetches latest git updates and checks if any new commits or incoming pulls are available.",
                         "parameters": {
@@ -95,21 +81,6 @@ class JarvisAgent:
                             "properties": {
                                 "repo_path": {"type": "string", "description": "Optional repository path. Defaults to workspace."}
                             }
-                        }
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "manage_system_volume",
-                        "description": "Controls master audio volume on Windows (set 0-100, mute, unmute, up, down).",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "action": {"type": "string", "enum": ["set", "mute", "unmute", "up", "down", "status"]},
-                                "level_percent": {"type": "integer", "description": "Volume percentage (0-100)"}
-                            },
-                            "required": ["action"]
                         }
                     }
                 },
@@ -196,20 +167,6 @@ class JarvisAgent:
                                 "message": {"type": "string"}
                             },
                             "required": ["contact_or_phone", "message"]
-                        }
-                    }
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "send_antigravity_command",
-                        "description": "Opens Antigravity IDE and types command/prompt.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "prompt_text": {"type": "string"}
-                            },
-                            "required": ["prompt_text"]
                         }
                     }
                 },
@@ -460,9 +417,38 @@ class JarvisAgent:
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "url": {"type": "string", "description": "The full website URL to inspect."}
+                                "url": {"type": "string", "description": "The URL to inspect."}
                             },
                             "required": ["url"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "fetch_web_knowledge_and_facts",
+                        "description": "Searches the live web and Wikipedia for accurate real-time facts, biography, background, location, and current work for any person, entity, company, place, or concept. Call immediately when asked 'Irfan Malik ke bare mein batao', 'kon hai', 'kya hai', 'malomat do', 'who is', 'what is'.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string", "description": "Person name, company, place, thing, or concept to look up (e.g. 'Irfan Malik', 'Xeven Solutions', 'Quantum computing')."}
+                            },
+                            "required": ["query"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "download_software_or_game",
+                        "description": "Downloads official Windows x64 applications, tools, software, or games. If user mentions 'FDM' (Free Download Manager), downloads via FDM. Otherwise, downloads into Windows Downloads folder via Chrome. Call immediately when user asks 'tradingview download krdo FDM mei', 'vscode download karo', 'git download karo', etc.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "software_name": {"type": "string", "description": "Name of the application or game (e.g. 'tradingview', 'vscode', 'discord', 'steam', 'vlc')."},
+                                "use_fdm": {"type": "boolean", "description": "True if user asked to download in FDM, False/null otherwise."}
+                            },
+                            "required": ["software_name"]
                         }
                     }
                 }
@@ -533,11 +519,14 @@ class JarvisAgent:
                         res = {"status": "error", "error": f"Tool '{fn_name}' not found."}
                     tool_results.append((tool_call, res))
                     
-                # Instant crisp return if tool already provides clear spoken message
+                # Instant crisp return if tool already provides clear spoken message (except for knowledge queries which need synthesis)
                 for tc, r in tool_results:
                     if not isinstance(r, dict):
                         continue
                     
+                    if tc.function.name == "fetch_web_knowledge_and_facts":
+                        continue # Let LLM synthesize facts into rich response
+                        
                     # Specific query customization for battery questions
                     if tc.function.name == "get_system_status":
                         prompt_l = user_prompt.lower()
@@ -570,9 +559,9 @@ class JarvisAgent:
                     second_resp = groq_client.chat.completions.create(
                         model=config.GROQ_MODEL,
                         messages=messages,
-                        max_tokens=150,
-                        temperature=0.5,
-                        timeout=5.0
+                        max_tokens=450,
+                        temperature=0.6,
+                        timeout=7.0
                     )
                     final_text = second_resp.choices[0].message.content or ""
                     import re
