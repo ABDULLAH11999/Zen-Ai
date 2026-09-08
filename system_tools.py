@@ -790,7 +790,7 @@ def check_git_repo_status(repo_path: Optional[str] = None) -> Dict[str, Any]:
         return {"status": "error", "error": f"Failed to check git repo: {str(e)}"}
 
 def get_latest_backtest_report_summary(bot_dir: str = "F:\\binance_mexc_bot") -> Dict[str, Any]:
-    """
+    r"""
     Reads the latest backtest report summary from F:\binance_mexc_bot\backtesting\reports\ and returns key metrics in Urdu.
     """
     import json
@@ -976,7 +976,7 @@ def check_scalper_bot_status(base_url: str = "https://scalper-bot.84-247-185-16.
 def unlock_workstation(pin: Optional[str] = None) -> Dict[str, Any]:
     """
     Wakes up display, handles Windows Hello Sign-In Options (Fingerprint -> PIN switch), and inputs configured PIN.
-    Uses low-level Windows hardware keybd_event API with mapped hardware scan codes.
+    Uses direct low-level Windows SendInput API with hardware scan codes and multi-phase fallback.
     """
     import time
     import ctypes
@@ -986,50 +986,151 @@ def unlock_workstation(pin: Optional[str] = None) -> Dict[str, Any]:
     if not target_pin:
         return {"status": "error", "error": "No Windows PIN configured in .env."}
         
-    def send_vk(vk_code: int, delay: float = 0.08):
+    PUL = ctypes.POINTER(ctypes.c_ulong)
+    class KeyBdInput(ctypes.Structure):
+        _fields_ = [
+            ("wVk", ctypes.c_ushort),
+            ("wScan", ctypes.c_ushort),
+            ("dwFlags", ctypes.c_ulong),
+            ("time", ctypes.c_ulong),
+            ("dwExtraInfo", PUL)
+        ]
+
+    class HardwareInput(ctypes.Structure):
+        _fields_ = [("uMsg", ctypes.c_ulong), ("wParamL", ctypes.c_short), ("wParamH", ctypes.c_ushort)]
+
+    class MouseInput(ctypes.Structure):
+        _fields_ = [("dx", ctypes.c_long), ("dy", ctypes.c_long), ("mouseData", ctypes.c_ulong), ("dwFlags", ctypes.c_ulong), ("time", ctypes.c_ulong), ("dwExtraInfo", PUL)]
+
+    class Input_I(ctypes.Union):
+        _fields_ = [("ki", KeyBdInput), ("mi", MouseInput), ("hi", HardwareInput)]
+
+    class Input(ctypes.Structure):
+        _fields_ = [("type", ctypes.c_ulong), ("ii", Input_I)]
+
+    MOUSEEVENTF_MOVE = 0x0001
+    MOUSEEVENTF_LEFTDOWN = 0x0002
+    MOUSEEVENTF_LEFTUP = 0x0004
+    MOUSEEVENTF_ABSOLUTE = 0x8000
+
+    w = user32.GetSystemMetrics(0)
+    h = user32.GetSystemMetrics(1)
+    center_x = w // 2
+
+    def send_key(vk_code, is_extended=False, delay=0.06):
         scan = user32.MapVirtualKeyW(vk_code, 0)
-        user32.keybd_event(vk_code, scan, 0, 0)
+        flags_down = 0
+        flags_up = KEYEVENTF_KEYUP
+        if is_extended:
+            flags_down |= KEYEVENTF_EXTENDEDKEY
+            flags_up |= KEYEVENTF_EXTENDEDKEY
+            
+        extra = ctypes.c_ulong(0)
+        ii_down = Input_I()
+        ii_down.ki = KeyBdInput(vk_code, scan, flags_down, 0, ctypes.pointer(extra))
+        x_down = Input(ctypes.c_ulong(1), ii_down)
+        
+        ii_up = Input_I()
+        ii_up.ki = KeyBdInput(vk_code, scan, flags_up, 0, ctypes.pointer(extra))
+        x_up = Input(ctypes.c_ulong(1), ii_up)
+        
+        user32.SendInput(1, ctypes.pointer(x_down), ctypes.sizeof(x_down))
         time.sleep(delay)
-        user32.keybd_event(vk_code, scan, 2, 0) # KEYEVENTF_KEYUP
+        user32.SendInput(1, ctypes.pointer(x_up), ctypes.sizeof(x_up))
+        time.sleep(delay)
+
+    def click_point(x, y, delay=0.06):
+        # 1. Hardware-level SendInput with Absolute coordinates (bypasses Winlogon UIPI)
+        abs_x = int(x * 65535 / w)
+        abs_y = int(y * 65535 / h)
+        extra = ctypes.c_ulong(0)
+        
+        down_inp = Input(
+            ctypes.c_ulong(0),
+            Input_I(mi=MouseInput(abs_x, abs_y, 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTDOWN, 0, ctypes.pointer(extra)))
+        )
+        up_inp = Input(
+            ctypes.c_ulong(0),
+            Input_I(mi=MouseInput(abs_x, abs_y, 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTUP, 0, ctypes.pointer(extra)))
+        )
+        user32.SendInput(1, ctypes.pointer(down_inp), ctypes.sizeof(down_inp))
+        time.sleep(delay)
+        user32.SendInput(1, ctypes.pointer(up_inp), ctypes.sizeof(up_inp))
         time.sleep(delay)
         
+        # 2. Also execute user32 SetCursorPos & mouse_event as secondary layer
+        try:
+            user32.SetCursorPos(int(x), int(y))
+            user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+            time.sleep(0.02)
+            user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+        except Exception:
+            pass
+
     try:
         VK_SPACE = 0x20
         VK_RETURN = 0x0D
         VK_TAB = 0x09
         VK_RIGHT = 0x27
-        VK_ESCAPE = 0x1B
+        VK_LEFT = 0x25
+        VK_UP = 0x26
+        VK_DOWN = 0x28
         
         # 1. Wake screen and lift lock screen cover
-        send_vk(VK_SPACE, 0.1)
-        time.sleep(0.5)
-        send_vk(VK_ESCAPE, 0.1)
-        time.sleep(0.5)
-        send_vk(VK_SPACE, 0.1)
-        time.sleep(1.0)
+        click_point(center_x, int(h * 0.5))
+        time.sleep(0.1)
+        send_key(VK_SPACE, delay=0.1)
+        time.sleep(0.7)
         
-        # 2. Switch from Fingerprint to PIN
-        # Press Tab to focus "Sign-in options" and Enter to expand
-        send_vk(VK_TAB, 0.1)
-        time.sleep(0.4)
-        send_vk(VK_RETURN, 0.1)
-        time.sleep(0.6)
-        
-        # Move right to select PIN keypad icon and press Enter/Space
-        send_vk(VK_RIGHT, 0.1)
-        time.sleep(0.4)
-        send_vk(VK_RETURN, 0.1)
-        time.sleep(1.0) # Wait for PIN box to render and focus
-        
-        # 3. Type PIN using numeric virtual keycodes (0x30 to 0x39) with hardware scan codes
+        # Immediate direct PIN entry attempt (works if PIN box is already active)
         for char in str(target_pin):
             if char.isdigit():
-                vk = ord(char) # 0x30-0x39
-                send_vk(vk, 0.09)
-                
+                send_key(ord(char), delay=0.06)
+        time.sleep(0.15)
+        send_key(VK_RETURN, delay=0.1)
         time.sleep(0.4)
-        send_vk(VK_RETURN, 0.1)
-        time.sleep(0.5)
+        
+        # 2. Click "Sign-in options" text link / button (located at ~8/10th = 75% to 85% height)
+        for y_pos in [int(h * 0.76), int(h * 0.78), int(h * 0.80), int(h * 0.82), int(h * 0.84)]:
+            click_point(center_x, y_pos)
+            time.sleep(0.04)
+            
+        # Also trigger keyboard Tab sequence
+        send_key(VK_TAB, delay=0.08)
+        time.sleep(0.08)
+        send_key(VK_SPACE, delay=0.08)
+        time.sleep(0.08)
+        send_key(VK_RETURN, delay=0.08)
+        time.sleep(0.35)
+        
+        # 3. Select PIN Tile (Keypad icon appears at ~78% - 83% height)
+        # Click across all possible tile icon horizontal offsets (left, center, right)
+        for y_tile in [int(h * 0.78), int(h * 0.80), int(h * 0.82)]:
+            for offset_x in [-70, -50, -35, -20, 0, 20, 35, 50, 70]:
+                click_point(center_x + offset_x, y_tile)
+                time.sleep(0.03)
+            
+        send_key(VK_LEFT, is_extended=True, delay=0.08)
+        time.sleep(0.08)
+        send_key(VK_RETURN, delay=0.08)
+        time.sleep(0.1)
+        send_key(VK_RIGHT, is_extended=True, delay=0.08)
+        time.sleep(0.08)
+        send_key(VK_RETURN, delay=0.08)
+        time.sleep(0.4)
+        
+        # 4. Click PIN text box area & type PIN digits (box appears at 55% - 68% height)
+        for y_pin in [int(h * 0.55), int(h * 0.58), int(h * 0.60), int(h * 0.63), int(h * 0.66)]:
+            click_point(center_x, y_pin)
+            time.sleep(0.04)
+            
+        for char in str(target_pin):
+            if char.isdigit():
+                send_key(ord(char), delay=0.08)
+                
+        time.sleep(0.2)
+        send_key(VK_RETURN, delay=0.1)
+        time.sleep(0.3)
         
         return {
             "status": "success",
@@ -1038,6 +1139,296 @@ def unlock_workstation(pin: Optional[str] = None) -> Dict[str, Any]:
     except Exception as e:
         logger.exception("Error executing unlock sequence")
         return {"status": "error", "error": str(e)}
+
+def send_antigravity_command(prompt_text: str) -> Dict[str, Any]:
+    """
+    Focuses the Antigravity IDE window, types prompt_text into the chat/command input, and sends it.
+    """
+    import ctypes
+    import time
+    import subprocess
+    user32 = ctypes.windll.user32
+    
+    try:
+        # Find Antigravity window handle
+        target_hwnd = None
+        def enum_handler(hwnd, _):
+            nonlocal target_hwnd
+            if user32.IsWindowVisible(hwnd):
+                length = user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    buff = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(hwnd, buff, length + 1)
+                    if "antigravity" in buff.value.lower():
+                        target_hwnd = hwnd
+                        return False
+            return True
+            
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+        user32.EnumWindows(WNDENUMPROC(enum_handler), 0)
+        
+        if target_hwnd:
+            SW_RESTORE = 9
+            user32.ShowWindow(target_hwnd, SW_RESTORE)
+            user32.SetForegroundWindow(target_hwnd)
+            time.sleep(0.3)
+            
+        # Copy prompt text to clipboard via PowerShell
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, suffix=".txt") as tf:
+            tf.write(prompt_text)
+            temp_prompt_file = tf.name
+            
+        ps_cmd = f"Get-Content -Path '{temp_prompt_file}' -Raw -Encoding utf8 | Set-Clipboard"
+        subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True)
+        try:
+            os.remove(temp_prompt_file)
+        except Exception:
+            pass
+            
+        time.sleep(0.2)
+        # Send Ctrl+V and Enter
+        VK_CONTROL = 0x11
+        VK_V = 0x56
+        VK_RETURN = 0x0D
+        
+        user32.keybd_event(VK_CONTROL, 0, 0, 0)
+        user32.keybd_event(VK_V, 0, 0, 0)
+        time.sleep(0.08)
+        user32.keybd_event(VK_V, 0, 2, 0)
+        user32.keybd_event(VK_CONTROL, 0, 2, 0)
+        time.sleep(0.2)
+        
+        user32.keybd_event(VK_RETURN, 0, 0, 0)
+        time.sleep(0.08)
+        user32.keybd_event(VK_RETURN, 0, 2, 0)
+        
+        return {
+            "status": "success",
+            "prompt_sent": prompt_text,
+            "message": f"Sir, Antigravity IDE mein prompt type karke send kardiya hai: '{prompt_text}'"
+        }
+    except Exception as e:
+        logger.exception("Error sending Antigravity command")
+        return {"status": "error", "error": str(e), "message": f"Antigravity prompt error: {str(e)}"}
+
+def set_ai_model(model_name: str) -> Dict[str, Any]:
+    """
+    Switches/sets the AI Model for ZEN / Antigravity (e.g., 'gemini-2.5-flash', 'gemini-3.5-flash', 'qwen', etc.).
+    """
+    try:
+        clean_model = model_name.strip()
+        # Aliases
+        if clean_model in ["3.7", "3.8", "3.5", "2.5", "flash"]:
+            model_map = {
+                "3.7": "gemini-3.7-flash",
+                "3.8": "gemini-3.8-flash",
+                "3.5": "gemini-3.5-flash",
+                "2.5": "gemini-2.5-flash",
+                "flash": "gemini-flash-latest"
+            }
+            target_model = model_map.get(clean_model, f"gemini-{clean_model}-flash")
+        else:
+            target_model = clean_model
+            
+        config.GEMINI_MODEL = target_model
+        
+        # Persist to .env
+        env_path = os.path.join(os.path.dirname(__file__), ".env")
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            import re
+            if "GEMINI_MODEL=" in content:
+                content = re.sub(r"GEMINI_MODEL=.*", f"GEMINI_MODEL={target_model}", content)
+            else:
+                content += f"\nGEMINI_MODEL={target_model}\n"
+            with open(env_path, "w", encoding="utf-8") as f:
+                f.write(content)
+                
+        return {
+            "status": "success",
+            "model_set": target_model,
+            "message": f"Sir, active AI model {target_model} par set kar diya gaya hai."
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e), "message": f"Model switch error: {str(e)}"}
+
+def get_running_system_apps() -> Dict[str, Any]:
+    """
+    Scans running desktop applications, active browser tabs, and open Antigravity workspaces.
+    """
+    import psutil
+    user_app_patterns = {
+        "antigravity": "Antigravity IDE",
+        "code": "Visual Studio Code",
+        "chrome": "Google Chrome",
+        "msedge": "Microsoft Edge",
+        "brave": "Brave Browser",
+        "spotify": "Spotify",
+        "discord": "Discord",
+        "whatsapp": "WhatsApp",
+        "gta5": "GTA V",
+        "playgtav": "GTA V",
+        "githubdesktop": "GitHub Desktop",
+        "laragon": "Laragon",
+        "steam": "Steam",
+        "notepad": "Notepad",
+        "vlc": "VLC",
+    }
+    
+    found_apps = {}
+    for p in psutil.process_iter(["name"]):
+        try:
+            n = (p.info["name"] or "").lower().replace(".exe", "").replace(" ", "").replace("-", "")
+            for pattern, display in user_app_patterns.items():
+                if pattern in n and display not in found_apps:
+                    found_apps[display] = True
+        except Exception:
+            pass
+            
+    # Check Antigravity Workspace if running
+    antigravity_workspace = None
+    if "Antigravity IDE" in found_apps:
+        brain_dir = r"C:\Users\LapStore\.gemini\antigravity-ide\brain"
+        if os.path.exists(brain_dir):
+            conv_dirs = [os.path.join(brain_dir, d) for d in os.listdir(brain_dir) if os.path.isdir(os.path.join(brain_dir, d)) and d != "tempmediaStorage"]
+            conv_dirs.sort(key=os.path.getmtime, reverse=True)
+            if conv_dirs:
+                latest_conv = conv_dirs[0]
+                t_file = os.path.join(latest_conv, ".system_generated", "logs", "transcript.jsonl")
+                if os.path.exists(t_file):
+                    try:
+                        with open(t_file, "r", encoding="utf-8") as f:
+                            for line in f:
+                                if "f:\\Agent" in line or "f:/Agent" in line:
+                                    antigravity_workspace = "F:\\Agent"
+                                    break
+                                elif "binance_mexc_bot" in line:
+                                    antigravity_workspace = "F:\\binance_mexc_bot"
+                                    break
+                    except Exception:
+                        pass
+        if not antigravity_workspace:
+            antigravity_workspace = "F:\\Agent"
+            
+    app_list_str = []
+    for app in found_apps.keys():
+        if app == "Antigravity IDE" and antigravity_workspace:
+            app_list_str.append(f"Antigravity IDE (Workspace: {antigravity_workspace})")
+        else:
+            app_list_str.append(app)
+            
+    if not app_list_str:
+        summary = "Sir, system par is waqt koi major user application open nahi hai."
+    else:
+        summary = "Sir, system par is waqt yeh applications run ho rahe hain: " + ", ".join(app_list_str) + "."
+        
+    return {
+        "status": "success",
+        "running_apps": list(found_apps.keys()),
+        "antigravity_workspace": antigravity_workspace,
+        "spoken_summary": summary,
+        "message": summary
+    }
+
+def get_antigravity_activity_summary() -> Dict[str, Any]:
+    """
+    Summarizes the current conversation, latest prompt, and actions executing in Antigravity IDE.
+    """
+    import json
+    import re
+    brain_dir = r"C:\Users\LapStore\.gemini\antigravity-ide\brain"
+    if not os.path.exists(brain_dir):
+        return {"status": "error", "message": "Sir, Antigravity IDE directory nahi mili."}
+        
+    conv_dirs = [os.path.join(brain_dir, d) for d in os.listdir(brain_dir) if os.path.isdir(os.path.join(brain_dir, d)) and d != "tempmediaStorage"]
+    conv_dirs.sort(key=os.path.getmtime, reverse=True)
+    if not conv_dirs:
+        return {"status": "error", "message": "Sir, koi active Antigravity session nahi mila."}
+        
+    latest_conv = conv_dirs[0]
+    t_file = os.path.join(latest_conv, ".system_generated", "logs", "transcript.jsonl")
+    
+    last_user_query = ""
+    last_agent_text = ""
+    
+    if os.path.exists(t_file):
+        with open(t_file, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            
+        for line in reversed(lines):
+            try:
+                item = json.loads(line)
+                t = item.get("type")
+                content = item.get("content", "")
+                if t == "USER_INPUT" and not last_user_query:
+                    clean_req = re.sub(r"<USER_REQUEST>\s*", "", content)
+                    clean_req = re.sub(r"</USER_REQUEST>.*", "", clean_req, flags=re.DOTALL).strip()
+                    if clean_req:
+                        last_user_query = clean_req
+                elif t == "PLANNER_RESPONSE" and not last_agent_text:
+                    if content and len(content.strip()) > 15:
+                        clean_c = re.sub(r"<thought>.*?</thought>", "", content, flags=re.DOTALL)
+                        clean_c = re.sub(r"[\*#`]", "", clean_c).strip()
+                        if clean_c:
+                            last_agent_text = clean_c[:200]
+                if last_user_query and last_agent_text:
+                    break
+            except Exception:
+                pass
+                
+    if not last_user_query:
+        last_user_query = "Code changes execution"
+        
+    summary = f"Sir, Antigravity IDE mein current task yeh hai: \"{last_user_query[:90]}\". Is par execution mukammal ki ja rahi hai."
+    return {
+        "status": "success",
+        "last_user_query": last_user_query,
+        "last_agent_summary": last_agent_text,
+        "spoken_summary": summary,
+        "message": summary
+    }
+
+def inspect_web_page_or_dashboard(url: str, prompt: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Universal web page reader & dashboard inspector. Reads content from any URL and summarizes it.
+    """
+    import requests
+    import html
+    import re
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = f"https://{url}"
+        
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        }
+        res = requests.get(url, headers=headers, timeout=12, verify=False)
+        if res.status_code != 200:
+            return {"status": "error", "message": f"Webpage check karne mein error aya (Status {res.status_code})."}
+            
+        title_match = re.search(r'<title>(.*?)</title>', res.text, re.IGNORECASE | re.DOTALL)
+        title = html.unescape(title_match.group(1)).strip() if title_match else "Web Page"
+        
+        # Clean HTML
+        clean = re.sub(r'<script.*?</script>', '', res.text, flags=re.DOTALL | re.IGNORECASE)
+        clean = re.sub(r'<style.*?</style>', '', clean, flags=re.DOTALL | re.IGNORECASE)
+        clean = re.sub(r'<[^>]+>', ' ', clean)
+        clean_text = ' '.join(html.unescape(clean).split())[:1000]
+        
+        summary = f"Sir, {title[:50]} page read karliya hai. Main content: {clean_text[:180]}."
+        return {
+            "status": "success",
+            "url": url,
+            "title": title,
+            "content_sample": clean_text[:500],
+            "spoken_summary": summary,
+            "message": summary
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e), "message": f"Sir, web page read nahi ho saka: {str(e)}"}
 
 def open_url_or_application(target: str) -> Dict[str, Any]:
     """
@@ -1302,6 +1693,10 @@ TOOL_REGISTRY = {
     "manage_display_brightness": manage_display_brightness,
     "manage_media_playback": manage_media_playback,
     "get_open_browser_tabs": get_open_browser_tabs,
+    "get_running_system_apps": get_running_system_apps,
+    "get_antigravity_activity_summary": get_antigravity_activity_summary,
+    "set_ai_model": set_ai_model,
+    "inspect_web_page_or_dashboard": inspect_web_page_or_dashboard,
 }
 
 # Declarations for Gemini 2.0 Function Calling
@@ -1331,4 +1726,8 @@ TOOL_DECLARATIONS = [
     manage_display_brightness,
     manage_media_playback,
     get_open_browser_tabs,
+    get_running_system_apps,
+    get_antigravity_activity_summary,
+    set_ai_model,
+    inspect_web_page_or_dashboard,
 ]

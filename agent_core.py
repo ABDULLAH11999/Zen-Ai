@@ -343,6 +343,70 @@ class JarvisAgent:
                             }
                         }
                     }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_running_system_apps",
+                        "description": "Scans all running user applications on the laptop and active Antigravity workspace. Call immediately when user asks 'system pe kya run hora he', 'laptop pe kya chal raha hai', 'running apps', etc.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {}
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_antigravity_activity_summary",
+                        "description": "Reads latest conversation and active commands/responses in Antigravity IDE and summarizes current task. Call when user asks 'antigravity pe kya chal raha he', 'antigravity status', 'antigravity summary', etc.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {}
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "send_antigravity_command",
+                        "description": "Focuses Antigravity IDE and types a prompt/command into the active workspace chat box and sends it. Call when user asks 'antigravity pe prompt likho', 'antigravity ko prompt bhejo', etc.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "prompt_text": {"type": "string", "description": "The exact prompt text to type and submit."}
+                            },
+                            "required": ["prompt_text"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "set_ai_model",
+                        "description": "Switches the active AI model (e.g. '3.7 se 3.8', 'gemini-3.8-flash', 'gemini-2.5-flash'). Call when user asks 'model change karo', 'model 3.8 set karo', etc.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "model_name": {"type": "string", "description": "Model name or version to switch to."}
+                            },
+                            "required": ["model_name"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "inspect_web_page_or_dashboard",
+                        "description": "Reads any website link/URL, extracts text/dashboard data, and summarizes what is on the page. Call when user provides any website link or asks to read a web page.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "url": {"type": "string", "description": "The full website URL to inspect."}
+                            },
+                            "required": ["url"]
+                        }
+                    }
                 }
             ]
             
@@ -510,6 +574,21 @@ class JarvisAgent:
         if any(w in lower_prompt for w in ["chrome pe konse tabs", "chrome ke tabs", "konse tabs on", "browser ke tabs", "chrome tabs"]):
             res = TOOL_REGISTRY["get_open_browser_tabs"](browser_name="chrome")
             return res.get("spoken_summary", res.get("message", "Sir, Chrome ke tabs retrieve karliye hain."))
+            
+        if any(w in lower_prompt for w in ["system pe kya run", "system par kya run", "system pe kya chal", "laptop pe kya run", "kya chal raha he system", "running apps", "kon kon sa app"]):
+            res = TOOL_REGISTRY["get_running_system_apps"]()
+            return res.get("spoken_summary", res.get("message", "Sir, system applications retrieve karli hain."))
+            
+        if any(w in lower_prompt for w in ["antigravity pe kya", "antigravity par kya", "antigravity status", "antigravity summary", "antigravity activity", "antigravity kya kar"]):
+            res = TOOL_REGISTRY["get_antigravity_activity_summary"]()
+            return res.get("spoken_summary", res.get("message", "Sir, Antigravity summary retrieve karli hai."))
+            
+        if "model" in lower_prompt and any(w in lower_prompt for w in ["set", "change", "badlo", "karo", "switch", "3.7", "3.8"]):
+            import re
+            m = re.search(r"(\d+\.\d+|flash|pro|gemini[a-zA-Z0-9\.\-]+|qwen[a-zA-Z0-9\.\-/]+)", lower_prompt)
+            target_m = m.group(1) if m else "3.8"
+            res = TOOL_REGISTRY["set_ai_model"](model_name=target_m)
+            return res.get("message", f"Sir, model {target_m} par set kardiya hai.")
         
         # 1. Fast Path for instantaneous sub-second execution (non-vision queries & actions)
         if not needs_vision and config.GROQ_API_KEY:
