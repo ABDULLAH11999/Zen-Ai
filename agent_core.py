@@ -217,13 +217,43 @@ class JarvisAgent:
                     "type": "function",
                     "function": {
                         "name": "search_and_open_in_browser",
-                        "description": "Searches or opens URLs, Chrome History, or Websites (e.g. Contabo, Linux server, PMI, Google).",
+                        "description": "Opens Google Chrome with Abdullah Irfan profile (Profile 1) by default, in Guest mode, or in Incognito mode. Automatically resolves short keywords and multi-target queries (e.g. 'vmi aur einno dono open kro', 'emp', 'contabo', 'scalper', 'youtube') to their exact URLs and opens them simultaneously in separate tabs.",
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "query": {"type": "string", "description": "Search term, website name, or URL to open."}
+                                "query": {"type": "string", "description": "Website name, domain, multiple targets (e.g. 'vmi aur einno', 'emp', 'scalper bot'), or search query."},
+                                "mode": {"type": "string", "enum": ["default", "guest", "incognito"], "description": "Profile mode: 'default' for Abdullah Irfan profile, 'guest' for Guest account, 'incognito' for Incognito mode."}
+                            }
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "proceed_browser_login",
+                        "description": "Submits or executes login on the active web page (e.g. Contabo VMI, Einnovention EMP, Plesk). Call immediately when user asks 'login proceed kro', 'login enter karo', 'login button click karo', 'einno wale prefilled login proceed kro'.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "app_keyword": {"type": "string", "description": "Browser window title or keyword. Defaults to 'Chrome'."},
+                                "action": {"type": "string", "description": "Action type: 'submit' or 'enter'."}
+                            }
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "type_text_into_active_app",
+                        "description": "Focuses an application window and types text or simulated key sequences (e.g. {TAB}, {ENTER}, {DOWN}, {UP}, {CTRL+A}).",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "app_keyword": {"type": "string", "description": "Application title or keyword (e.g. 'Chrome', 'Notepad', 'Code')."},
+                                "text": {"type": "string", "description": "Text or key sequence to send (e.g. 'username{TAB}password{ENTER}')."},
+                                "press_enter": {"type": "boolean", "description": "Whether to press enter at the end."}
                             },
-                            "required": ["query"]
+                            "required": ["app_keyword", "text"]
                         }
                     }
                 },
@@ -238,6 +268,20 @@ class JarvisAgent:
                                 "level": {"type": "integer", "description": "Target brightness percentage between 0 and 100."},
                                 "action": {"type": "string", "enum": ["set", "increase", "decrease", "max", "min"], "description": "Action type"}
                             }
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "manage_screen_power",
+                        "description": "Turns laptop display OFF (black screen without locking) or turns display back ON. Call when asked 'screen off kardo', 'display band karo', 'black screen kardo', 'screen on kardo', 'display on karo', etc.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "action": {"type": "string", "enum": ["off", "on", "keep_alive"], "description": "Action type"}
+                            },
+                            "required": ["action"]
                         }
                     }
                 },
@@ -290,6 +334,20 @@ class JarvisAgent:
                                 "app_name": {"type": "string", "description": "Application name or process to close."}
                             },
                             "required": ["app_name"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "play_youtube_music_or_video",
+                        "description": "Searches YouTube for any song, video, artist, or music and immediately starts playing it in Chrome with Abdullah Irfan profile. Call when user asks 'song lagao', 'gaana chalao', 'music play karo', 'play arijit singh', 'play lofi', etc.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string", "description": "Song name, artist, genre, or search term (e.g. 'arijit singh romantic songs', 'lofi beats', 'sidhu moose wala')."}
+                            },
+                            "required": ["query"]
                         }
                     }
                 },

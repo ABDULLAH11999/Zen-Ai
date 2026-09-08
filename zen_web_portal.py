@@ -177,6 +177,7 @@ async def api_voice_command(audio: UploadFile = File(...)):
 from system_tools import (
     get_system_status,
     manage_windows_power,
+    manage_screen_power,
     unlock_workstation,
     search_and_open_in_browser,
     open_url_or_application,
@@ -188,19 +189,66 @@ from system_tools import (
     check_scalper_bot_status
 )
 
+# Background Keep-Awake Sentinel: Prevents Windows from Auto-Locking while portal is running
+keep_awake_active = True
+display_state = "on"
+
+async def keep_awake_loop():
+    """Periodically calls SetThreadExecutionState to keep session awake without locking."""
+    import ctypes
+    kernel32 = ctypes.windll.kernel32
+    ES_CONTINUOUS = 0x80000000
+    ES_SYSTEM_REQUIRED = 0x00000001
+    ES_DISPLAY_REQUIRED = 0x00000002
+    
+    while True:
+        try:
+            if keep_awake_active:
+                kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED)
+        except Exception:
+            pass
+        await asyncio.sleep(25)
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(keep_awake_loop())
+    logger.info("[Z.E.N.] Anti-Lock Keep-Awake Sentinel activated.")
+
 @app.post("/api/quick_action")
 async def api_quick_action(payload: dict):
     """Executes 1-click mobile quick actions."""
+    global keep_awake_active, display_state
     action = payload.get("action", "")
     logger.info(f"Mobile Quick Action: '{action}'")
     
     msg = "Action executed."
-    if action == "lock":
-        manage_windows_power("lock")
-        msg = "Windows locked successfully, Sir."
+    if action in ["toggle_display", "screen_toggle"]:
+        if display_state == "on":
+            manage_screen_power("off")
+            display_state = "off"
+            msg = "Display black kar di gayi hai, session unlocked aur apps active hain, Sir."
+        else:
+            manage_screen_power("on")
+            display_state = "on"
+            msg = "Display on kar di gayi hai, Sir."
+    elif action in ["screen_off", "black_screen"]:
+        manage_screen_power("off")
+        display_state = "off"
+        msg = "Screen black kar di gayi hai, session unlocked aur apps active hain, Sir."
+    elif action in ["wake_screen", "screen_on"]:
+        manage_screen_power("on")
+        display_state = "on"
+        msg = "Screen on kar di gayi hai, Sir."
+    elif action == "lock":
+        # When portal is connected, turn screen black to prevent lock screen credential barrier
+        manage_screen_power("off")
+        display_state = "off"
+        msg = "Display black kar di gayi hai. Portal active hone ki wajah se system session unlocked hai, Sir."
     elif action == "unlock":
+        manage_screen_power("on")
+        display_state = "on"
         res = unlock_workstation()
-        msg = res.get("message", "Unlocked.")
+        msg = res.get("message", "Screen wake & unlock triggered.")
     elif action == "close_apps":
         res = close_all_user_applications()
         msg = res.get("message", "All apps closed.")
@@ -213,9 +261,12 @@ async def api_quick_action(payload: dict):
     elif action == "check_bot":
         res = check_scalper_bot_status()
         msg = res.get("spoken_summary", res.get("message", "Bot status retrieved."))
+    elif action == "shutdown":
+        manage_windows_power("shutdown")
+        msg = "Sir, system shutdown 5 seconds mein initiate ho raha hai."
         
     tts_b64 = await generate_tts_base64(msg)
-    return {"status": "success", "message": msg, "audio_base64": tts_b64}
+    return {"status": "success", "message": msg, "audio_base64": tts_b64, "display_state": display_state}
 
 @app.get("/", response_class=HTMLResponse)
 async def mobile_portal_ui():
@@ -609,11 +660,8 @@ async def mobile_portal_ui():
 
     <!-- Quick Control Actions -->
     <div class="controls-grid">
-        <button class="action-btn unlock-btn" onclick="triggerAction('unlock')">
-            🔓 Auto-Unlock Workstation
-        </button>
-        <button class="action-btn" onclick="triggerAction('lock')">
-            🔒 Lock Screen
+        <button class="action-btn toggle-display-btn" id="display-toggle-btn" style="grid-column: span 2; background: linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(121, 40, 202, 0.15)); border-color: rgba(0, 240, 255, 0.4); font-size: 15px; padding: 15px;" onclick="toggleDisplayPower()">
+            🖥️ Display: ON (Tap to Black)
         </button>
         <button class="action-btn" onclick="toggleScreen()">
             🖥️ View Screen
@@ -624,12 +672,28 @@ async def mobile_portal_ui():
         <button class="action-btn" onclick="triggerAction('toggle_bt')">
             📶 Toggle Bluetooth
         </button>
+        <button class="action-btn" onclick="confirmShutdown()">
+            ⚡ Shutdown PC
+        </button>
         <button class="action-btn" onclick="triggerAction('backtest_report')">
             📈 Backtest Report
         </button>
         <button class="action-btn" onclick="triggerAction('check_bot')">
             🤖 Check Bot
         </button>
+    </div>
+
+    <!-- Cyberpunk Confirmation Modal for Shutdown -->
+    <div id="shutdown-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.82); z-index: 99999; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); align-items: center; justify-content: center; padding: 20px;">
+        <div style="background: #0e1422; border: 1px solid rgba(255, 0, 85, 0.5); border-radius: 20px; padding: 24px; max-width: 360px; width: 100%; box-shadow: 0 0 35px rgba(255, 0, 85, 0.35); text-align: center; display: flex; flex-direction: column; gap: 14px;">
+            <div style="font-size: 40px; filter: drop-shadow(0 0 10px rgba(255, 0, 85, 0.6));">⚠️</div>
+            <div style="font-family: 'Outfit', sans-serif; font-size: 18px; font-weight: 700; color: #fff;">Confirm System Shutdown?</div>
+            <div style="font-size: 13.5px; color: var(--text-dim); line-height: 1.45;">Sir, kya aap sach mein PC / Laptop shutdown karna chahte hain? Tamam running tasks close ho jayenge.</div>
+            <div style="display: flex; gap: 10px; margin-top: 8px;">
+                <button onclick="closeShutdownModal()" style="flex: 1; background: rgba(255,255,255,0.08); border: 1px solid var(--card-border); color: #fff; padding: 12px; border-radius: 12px; font-weight: 600; font-size: 14px; cursor: pointer;">Cancel</button>
+                <button onclick="executeShutdown()" style="flex: 1; background: linear-gradient(135deg, #ff0055, #ff3366); border: none; color: #fff; padding: 12px; border-radius: 12px; font-weight: 700; font-size: 14px; cursor: pointer; box-shadow: 0 0 18px rgba(255, 0, 85, 0.5);">Yes, Shutdown</button>
+            </div>
+        </div>
     </div>
 
     <!-- Real-time Desktop Screen Viewer Container -->
@@ -890,6 +954,25 @@ async def mobile_portal_ui():
         }
     }
 
+    let isDisplayOn = true;
+
+    async function toggleDisplayPower() {
+        unlockIOSAudio();
+        const btn = document.getElementById('display-toggle-btn');
+        isDisplayOn = !isDisplayOn;
+        if (!isDisplayOn) {
+            btn.innerHTML = '🌑 Display: BLACK (Tap to Wake)';
+            btn.style.background = 'linear-gradient(135deg, rgba(121, 40, 202, 0.35), rgba(16, 22, 34, 0.8))';
+            btn.style.borderColor = 'rgba(121, 40, 202, 0.6)';
+            triggerAction('screen_off');
+        } else {
+            btn.innerHTML = '🖥️ Display: ON (Tap to Black)';
+            btn.style.background = 'linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(121, 40, 202, 0.15))';
+            btn.style.borderColor = 'rgba(0, 240, 255, 0.4)';
+            triggerAction('wake_screen');
+        }
+    }
+
     async function triggerAction(actionName) {
         unlockIOSAudio();
         zenReplyText.textContent = "Executing " + actionName + "...";
@@ -901,12 +984,43 @@ async def mobile_portal_ui():
             });
             const data = await res.json();
             zenReplyText.textContent = "⚡ " + data.message;
+            if (data.display_state) {
+                const btn = document.getElementById('display-toggle-btn');
+                if (data.display_state === 'off') {
+                    isDisplayOn = false;
+                    btn.innerHTML = '🌑 Display: BLACK (Tap to Wake)';
+                    btn.style.background = 'linear-gradient(135deg, rgba(121, 40, 202, 0.35), rgba(16, 22, 34, 0.8))';
+                    btn.style.borderColor = 'rgba(121, 40, 202, 0.6)';
+                } else {
+                    isDisplayOn = true;
+                    btn.innerHTML = '🖥️ Display: ON (Tap to Black)';
+                    btn.style.background = 'linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(121, 40, 202, 0.15))';
+                    btn.style.borderColor = 'rgba(0, 240, 255, 0.4)';
+                }
+            }
             if (data.audio_base64) {
                 playTTSAudio(data.audio_base64);
             }
         } catch (e) {
             zenReplyText.textContent = "Error: " + e;
         }
+    }
+
+    function confirmShutdown() {
+        unlockIOSAudio();
+        const modal = document.getElementById('shutdown-modal');
+        if (modal) modal.style.display = 'flex';
+    }
+
+    function closeShutdownModal() {
+        const modal = document.getElementById('shutdown-modal');
+        if (modal) modal.style.display = 'none';
+    }
+
+    async function executeShutdown() {
+        closeShutdownModal();
+        zenReplyText.textContent = "⚡ Initiating System Shutdown...";
+        await triggerAction('shutdown');
     }
 </script>
 </body>

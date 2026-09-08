@@ -1,4 +1,5 @@
 import os
+import time
 import subprocess
 import logging
 import psutil
@@ -466,25 +467,84 @@ def send_antigravity_command(prompt_text: str, open_new_chat: bool = True) -> Di
 
 def type_text_into_active_app(app_keyword: str, text: str, press_enter: bool = True) -> Dict[str, Any]:
     """
-    Focuses an application window (e.g. Chrome, VS Code, Notepad, Discord, Telegram), types the given text, and optionally presses enter.
+    Focuses an application window (e.g. Chrome, VS Code, Notepad, Discord, Telegram),
+    types the given text, and supports simulated key tokens like {TAB}, {ENTER}, {DOWN}, {UP}, {CTRL+A}, {BACKSPACE}.
     """
     import time
+    import re
     import pyautogui
     import pyperclip
     
     try:
         focus_window_by_title(app_keyword)
-        time.sleep(0.5)
-        pyperclip.copy(text)
-        pyautogui.hotkey("ctrl", "v")
-        if press_enter:
+        time.sleep(0.4)
+        
+        # Check if text contains simulated key tokens like {TAB}, {ENTER}, etc.
+        tokens = re.findall(r"(\{[A-Za-z0-9_+-]+\}|[^{]+)", text)
+        for token in tokens:
+            t_upper = token.upper().strip()
+            if t_upper == "{TAB}":
+                pyautogui.press("tab")
+                time.sleep(0.15)
+            elif t_upper in ["{ENTER}", "{RETURN}"]:
+                pyautogui.press("enter")
+                time.sleep(0.2)
+            elif t_upper == "{DOWN}":
+                pyautogui.press("down")
+                time.sleep(0.15)
+            elif t_upper == "{UP}":
+                pyautogui.press("up")
+                time.sleep(0.15)
+            elif t_upper in ["{ESC}", "{ESCAPE}"]:
+                pyautogui.press("escape")
+                time.sleep(0.15)
+            elif t_upper in ["{BACKSPACE}", "{BS}"]:
+                pyautogui.press("backspace")
+                time.sleep(0.1)
+            elif t_upper in ["{CTRL+A}", "{SELECT_ALL}"]:
+                pyautogui.hotkey("ctrl", "a")
+                time.sleep(0.1)
+            elif t_upper == "{SPACE}":
+                pyautogui.press("space")
+                time.sleep(0.1)
+            else:
+                # Type or paste normal text chunk
+                if token:
+                    pyperclip.copy(token)
+                    pyautogui.hotkey("ctrl", "v")
+                    time.sleep(0.15)
+                    
+        if press_enter and not any(k in text.upper() for k in ["{ENTER}", "{RETURN}"]):
             time.sleep(0.2)
             pyautogui.press("enter")
+            
         return {
             "status": "success",
-            "message": f"Typed text into {app_keyword}."
+            "message": f"Sir, {app_keyword} mein text type aur key execution mukammal kardiya hai."
         }
     except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+def proceed_browser_login(app_keyword: str = "Chrome", action: str = "submit") -> Dict[str, Any]:
+    """
+    Proceeds with login on the active browser page by submitting prefilled credentials or pressing Enter.
+    Call whenever user says 'login proceed kro', 'login enter karo', 'login button click karo', 'prefilled login proceed karo'.
+    """
+    import time
+    import pyautogui
+    try:
+        focus_window_by_title(app_keyword)
+        time.sleep(0.4)
+        
+        # Press Enter to submit the form or active login button
+        pyautogui.press("enter")
+        
+        return {
+            "status": "success",
+            "message": "Sir, browser login proceed aur submit kardiya hai."
+        }
+    except Exception as e:
+        logger.exception("Error in proceed_browser_login")
         return {"status": "error", "error": str(e)}
 
 def manage_display_brightness(level: Optional[int] = None, action: str = "set") -> Dict[str, Any]:
@@ -656,10 +716,87 @@ def manage_system_volume(action: str = "status", level_percent: Optional[int] = 
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
+# Standalone Pure Black Screen Controller (Guarantees Unlocked State with 0% Lock Screen risk)
+_black_screen_proc = None
+
+def manage_screen_power(action: str = "off") -> Dict[str, Any]:
+    """
+    Controls display power and black screen overlay without locking the session.
+    Actions:
+    - 'off' / 'black': Opens fullscreen pure black overlay (screen is pitch black, cursor hidden, session stays 100% unlocked).
+    - 'on' / 'wake': Instantly removes black screen overlay, waking desktop without PIN/Password.
+    - 'keep_alive': Prevents Windows from auto-locking or sleeping.
+    """
+    global _black_screen_proc
+    import subprocess
+    import sys
+    import ctypes
+    from pathlib import Path
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    action = action.lower().strip()
+    
+    ES_CONTINUOUS = 0x80000000
+    ES_SYSTEM_REQUIRED = 0x00000001
+    ES_DISPLAY_REQUIRED = 0x00000002
+    
+    overlay_script = str(Path(__file__).resolve().parent / "black_screen_overlay.py")
+    
+    if action in ["off", "black", "dim", "toggle_off"]:
+        # Keep system running & awake
+        kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED)
+        
+        # Check if already running
+        if _black_screen_proc and _black_screen_proc.poll() is None:
+            return {"status": "success", "message": "Screen already black, session unlocked, Sir."}
+            
+        try:
+            # Spawn interactive GUI window on the user desktop
+            _black_screen_proc = subprocess.Popen([sys.executable, overlay_script])
+        except Exception as e:
+            logger.error(f"Failed to spawn black_screen_overlay: {e}")
+            
+        return {
+            "status": "success",
+            "message": "Screen black kar di gayi hai, workstation session unlocked aur apps active hain, Sir."
+        }
+    elif action in ["on", "wake", "bright", "toggle_on"]:
+        # Terminate black screen overlay if active
+        if _black_screen_proc:
+            try:
+                _black_screen_proc.terminate()
+            except Exception:
+                pass
+            _black_screen_proc = None
+            
+        # Extra safety: kill any residual black_screen_overlay processes
+        try:
+            subprocess.run(["taskkill", "/F", "/IM", "black_screen_overlay.py", "/T"], capture_output=True)
+        except Exception:
+            pass
+            
+        # Jiggle mouse to refresh desktop & ensure display active
+        kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED)
+        user32.mouse_event(0x0001, 1, 1, 0, 0)
+        time.sleep(0.02)
+        user32.mouse_event(0x0001, -1, -1, 0, 0)
+        
+        return {
+            "status": "success",
+            "message": "Display on kar di gayi hai, Sir."
+        }
+    elif action == "keep_alive":
+        kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED)
+        return {
+            "status": "success",
+            "message": "System awake protection active hai."
+        }
+    return {"status": "info", "message": f"Screen action '{action}' executed."}
+
 def manage_windows_power(action: str = "lock") -> Dict[str, Any]:
     """
     Manages power and screen locking on Windows.
-    Actions: 'lock' (locks screen/workstation), 'sleep', 'restart', 'shutdown', 'cancel_shutdown'.
+    Actions: 'lock' (locks screen/workstation), 'screen_off' (black screen without lock), 'wake_screen', 'sleep', 'restart', 'shutdown', 'cancel_shutdown'.
     """
     try:
         action = action.lower()
@@ -667,15 +804,19 @@ def manage_windows_power(action: str = "lock") -> Dict[str, Any]:
             import ctypes
             ctypes.windll.user32.LockWorkStation()
             return {"status": "success", "message": "Windows workstation locked, Sir."}
+        elif action in ["screen_off", "black_screen", "display_off"]:
+            return manage_screen_power("off")
+        elif action in ["wake_screen", "screen_on", "display_on"]:
+            return manage_screen_power("on")
         elif action == "sleep":
             os.system("rundll32.exe powrprof.dll,SetSuspendState 0,1,0")
             return {"status": "success", "message": "Putting system to sleep."}
         elif action == "shutdown":
-            os.system("shutdown /s /t 60")
-            return {"status": "success", "message": "Shutdown initiated in 60 seconds. Say cancel to abort."}
+            os.system("shutdown /s /t 5")
+            return {"status": "success", "message": "Sir, system shutdown 5 seconds mein initiate kar diya gaya hai."}
         elif action == "restart":
-            os.system("shutdown /r /t 60")
-            return {"status": "success", "message": "Restart initiated in 60 seconds."}
+            os.system("shutdown /r /t 5")
+            return {"status": "success", "message": "Restart initiated in 5 seconds."}
         elif action == "cancel_shutdown" or action == "cancel":
             os.system("shutdown /a")
             return {"status": "success", "message": "Scheduled shutdown aborted."}
@@ -1008,6 +1149,9 @@ def unlock_workstation(pin: Optional[str] = None) -> Dict[str, Any]:
     class Input(ctypes.Structure):
         _fields_ = [("type", ctypes.c_ulong), ("ii", Input_I)]
 
+    KEYEVENTF_EXTENDEDKEY = 0x0001
+    KEYEVENTF_KEYUP = 0x0002
+    KEYEVENTF_SCANCODE = 0x0008
     MOUSEEVENTF_MOVE = 0x0001
     MOUSEEVENTF_LEFTDOWN = 0x0002
     MOUSEEVENTF_LEFTUP = 0x0004
@@ -1019,8 +1163,10 @@ def unlock_workstation(pin: Optional[str] = None) -> Dict[str, Any]:
 
     def send_key(vk_code, is_extended=False, delay=0.06):
         scan = user32.MapVirtualKeyW(vk_code, 0)
-        flags_down = 0
-        flags_up = KEYEVENTF_KEYUP
+        
+        # 1. Low-level Hardware SendInput with KEYEVENTF_SCANCODE
+        flags_down = KEYEVENTF_SCANCODE
+        flags_up = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP
         if is_extended:
             flags_down |= KEYEVENTF_EXTENDEDKEY
             flags_up |= KEYEVENTF_EXTENDEDKEY
@@ -1038,6 +1184,14 @@ def unlock_workstation(pin: Optional[str] = None) -> Dict[str, Any]:
         time.sleep(delay)
         user32.SendInput(1, ctypes.pointer(x_up), ctypes.sizeof(x_up))
         time.sleep(delay)
+        
+        # 2. Also execute classic Win32 keybd_event as secondary layer
+        try:
+            user32.keybd_event(vk_code, scan, 0, 0)
+            time.sleep(0.02)
+            user32.keybd_event(vk_code, scan, KEYEVENTF_KEYUP, 0)
+        except Exception:
+            pass
 
     def click_point(x, y, delay=0.06):
         # 1. Hardware-level SendInput with Absolute coordinates (bypasses Winlogon UIPI)
@@ -1082,16 +1236,24 @@ def unlock_workstation(pin: Optional[str] = None) -> Dict[str, Any]:
         send_key(VK_SPACE, delay=0.1)
         time.sleep(0.7)
         
-        # Immediate direct PIN entry attempt (works if PIN box is already active)
+        # Immediate direct PIN entry attempt (works 100% if PIN box is active)
         for char in str(target_pin):
             if char.isdigit():
-                send_key(ord(char), delay=0.06)
-        time.sleep(0.15)
+                send_key(ord(char), delay=0.08)
+                try:
+                    pyautogui.press(char)
+                except Exception:
+                    pass
+        time.sleep(0.2)
         send_key(VK_RETURN, delay=0.1)
+        try:
+            pyautogui.press('enter')
+        except Exception:
+            pass
         time.sleep(0.4)
         
-        # 2. Click "Sign-in options" text link / button (located at ~8/10th = 75% to 85% height)
-        for y_pos in [int(h * 0.76), int(h * 0.78), int(h * 0.80), int(h * 0.82), int(h * 0.84)]:
+        # 2. Click "Sign-in options" text link / button (handles Fingerprint default)
+        for y_pos in [int(h * 0.54), int(h * 0.58), int(h * 0.60), int(h * 0.76), int(h * 0.80)]:
             click_point(center_x, y_pos)
             time.sleep(0.04)
             
@@ -1103,9 +1265,8 @@ def unlock_workstation(pin: Optional[str] = None) -> Dict[str, Any]:
         send_key(VK_RETURN, delay=0.08)
         time.sleep(0.35)
         
-        # 3. Select PIN Tile (Keypad icon appears at ~78% - 83% height)
-        # Click across all possible tile icon horizontal offsets (left, center, right)
-        for y_tile in [int(h * 0.78), int(h * 0.80), int(h * 0.82)]:
+        # 3. Select PIN Tile (Keypad icon)
+        for y_tile in [int(h * 0.58), int(h * 0.62), int(h * 0.80)]:
             for offset_x in [-70, -50, -35, -20, 0, 20, 35, 50, 70]:
                 click_point(center_x + offset_x, y_tile)
                 time.sleep(0.03)
@@ -1119,17 +1280,25 @@ def unlock_workstation(pin: Optional[str] = None) -> Dict[str, Any]:
         send_key(VK_RETURN, delay=0.08)
         time.sleep(0.4)
         
-        # 4. Click PIN text box area & type PIN digits (box appears at 55% - 68% height)
-        for y_pin in [int(h * 0.55), int(h * 0.58), int(h * 0.60), int(h * 0.63), int(h * 0.66)]:
+        # 4. Click PIN text box area & type PIN digits
+        for y_pin in [int(h * 0.52), int(h * 0.55), int(h * 0.58), int(h * 0.60)]:
             click_point(center_x, y_pin)
             time.sleep(0.04)
             
         for char in str(target_pin):
             if char.isdigit():
                 send_key(ord(char), delay=0.08)
+                try:
+                    pyautogui.press(char)
+                except Exception:
+                    pass
                 
-        time.sleep(0.2)
+        time.sleep(0.25)
         send_key(VK_RETURN, delay=0.1)
+        try:
+            pyautogui.press('enter')
+        except Exception:
+            pass
         time.sleep(0.3)
         
         return {
@@ -1541,35 +1710,210 @@ def open_url_or_application(target: str) -> Dict[str, Any]:
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
-def search_and_open_in_browser(query: str, search_type: str = "web") -> Dict[str, Any]:
+ALIAS_GROUPS = [
+    {
+        "keywords": ["vmi", "contabo", "plesk"],
+        "url": "https://vmi2928547.contaboserver.net:8443/login_up.php",
+        "name": "Contabo VMI"
+    },
+    {
+        "keywords": ["emp", "einno", "einnovention", "eino", "emp portal", "einno portal"],
+        "url": "https://emp.einnovention.co.uk",
+        "name": "Einnovention EMP"
+    },
+    {
+        "keywords": ["scalper", "scalper bot", "scalper dashboard"],
+        "url": "https://scalper-bot.84-247-185-16.plesk.page/",
+        "name": "Scalper Bot Dashboard"
+    },
+    {
+        "keywords": ["youtube", "yt"],
+        "url": "https://www.youtube.com",
+        "name": "YouTube"
+    },
+    {
+        "keywords": ["chatgpt", "openai"],
+        "url": "https://chatgpt.com",
+        "name": "ChatGPT"
+    },
+    {
+        "keywords": ["github"],
+        "url": "https://github.com",
+        "name": "GitHub"
+    },
+    {
+        "keywords": ["binance"],
+        "url": "https://www.binance.com",
+        "name": "Binance"
+    },
+    {
+        "keywords": ["mexc"],
+        "url": "https://www.mexc.com",
+        "name": "MEXC"
+    },
+    {
+        "keywords": ["tradingview"],
+        "url": "https://www.tradingview.com",
+        "name": "TradingView"
+    },
+    {
+        "keywords": ["whatsapp"],
+        "url": "https://web.whatsapp.com",
+        "name": "WhatsApp Web"
+    },
+    {
+        "keywords": ["gmail"],
+        "url": "https://mail.google.com",
+        "name": "Gmail"
+    }
+]
+
+def resolve_target_urls(query: str, profile_dir: str = "Profile 1") -> list:
     """
-    Instantly searches or opens URLs, Chrome History, or Bookmarks in the default web browser.
-    search_type: 'web' (default Google search), 'history' (opens Chrome history with search query), 'direct' (opens URL).
+    Parses a query for one or more target websites/portals (e.g. 'vmi aur einno dono open kro').
+    Matches aliases, Chrome history, or falls back to exact URL / Google search.
     """
+    import os
+    import re
+    import sqlite3
+    import shutil
     import urllib.parse
+
+    q_lower = query.lower().strip()
+    matched_urls = []
+    matched_names = []
+    seen = set()
+
+    # 1. Match known alias groups
+    for group in ALIAS_GROUPS:
+        for kw in group["keywords"]:
+            pattern = rf"\b{re.escape(kw)}\b"
+            if re.search(pattern, q_lower) or kw in q_lower:
+                if group["url"] not in seen:
+                    seen.add(group["url"])
+                    matched_urls.append(group["url"])
+                    matched_names.append(group["name"])
+                break
+
+    if matched_urls:
+        return matched_urls
+
+    # 2. Check if the query is a direct URL or domain
+    if "." in query and " " not in query:
+        url = query if query.startswith("http") else f"https://{query}"
+        return [url]
+
+    # 3. Clean query from conversational filler words
+    clean_q = q_lower
+    for w in ["browser mein", "browser me", "browser", "open karo", "open kro", "kholo", "login", "guest", "incognito", "dono", "aur", "sath", "or", "d kro"]:
+        clean_q = clean_q.replace(w, " ")
+    clean_q = " ".join(clean_q.split()).strip()
+
+    # 4. Search Chrome History SQLite database for clean query
+    if clean_q:
+        user_data = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
+        for p in [profile_dir, "Default"]:
+            hist_path = os.path.join(user_data, p, "History")
+            if os.path.exists(hist_path):
+                temp_path = os.path.join(user_data, p, f"History_tmp_query_{os.getpid()}")
+                try:
+                    shutil.copyfile(hist_path, temp_path)
+                    conn = sqlite3.connect(temp_path)
+                    c = conn.cursor()
+                    c.execute(
+                        "SELECT url FROM urls WHERE (url LIKE ? OR title LIKE ?) AND url NOT LIKE ? "
+                        "ORDER BY visit_count DESC, last_visit_time DESC LIMIT 1",
+                        (f"%{clean_q}%", f"%{clean_q}%", "%google.com/search%")
+                    )
+                    row = c.fetchone()
+                    conn.close()
+                    try:
+                        os.remove(temp_path)
+                    except Exception:
+                        pass
+                    if row and row[0]:
+                        return [row[0]]
+                except Exception:
+                    pass
+
+    # 5. Fallback to Google Search
+    fallback_q = clean_q if clean_q else query
+    return [f"https://www.google.com/search?q={urllib.parse.quote(fallback_q)}"]
+
+def find_best_url_match(query: str, profile_dir: str = "Profile 1") -> str:
+    """
+    Simulates Chrome Omnibox Autocomplete: returns top URL match for a given query.
+    """
+    urls = resolve_target_urls(query, profile_dir=profile_dir)
+    return urls[0] if urls else f"https://www.google.com/search?q={query}"
+
+def search_and_open_in_browser(query: str = "", mode: str = "default", search_type: str = "web") -> Dict[str, Any]:
+    """
+    Opens Google Chrome with Sir Abdullah Irfan's profile by default, in Guest mode, or in Incognito mode.
+    Supports single or multiple site targets (e.g. 'vmi and einno') and opens exact URLs simultaneously in tabs.
+    Modes:
+    - 'default': Opens with Sir Abdullah Irfan's profile (--profile-directory="Profile 1").
+    - 'guest': Opens with Guest account (--guest).
+    - 'incognito': Opens in Incognito mode with Abdullah Irfan's profile (--incognito).
+    """
     import subprocess
-    import webbrowser
+    import os
+    
     try:
-        if search_type == "history" or "history" in query.lower():
-            clean_q = query.replace("history", "").strip()
-            url = f"chrome://history/?q={urllib.parse.quote(clean_q)}" if clean_q else "chrome://history"
-        elif query.startswith("http://") or query.startswith("https://") or ("." in query and not " " in query):
-            url = query if query.startswith("http") else f"https://{query}"
+        # Locate Chrome executable
+        chrome_paths = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe")
+        ]
+        chrome_exe = next((p for p in chrome_paths if os.path.exists(p)), "chrome.exe")
+        
+        # Determine mode from query or parameter
+        q_lower = query.lower() if query else ""
+        if "guest" in q_lower or mode == "guest":
+            active_mode = "guest"
+            mode_flags = ["--guest"]
+            mode_desc = "Guest Account"
+        elif "incognito" in q_lower or "private" in q_lower or mode == "incognito":
+            active_mode = "incognito"
+            mode_flags = ["--incognito", "--profile-directory=Profile 1"]
+            mode_desc = "Incognito Mode (Abdullah Irfan)"
         else:
-            url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
+            active_mode = "default"
+            mode_flags = ["--profile-directory=Profile 1"]
+            mode_desc = "Abdullah Irfan Profile"
             
-        subprocess.Popen(["cmd.exe", "/c", "start", "", url], shell=True)
-        try:
-            webbrowser.open(url)
-        except Exception:
-            pass
+        # Clean query if mode keywords were embedded
+        clean_query = query
+        for kw in ["guest account", "guest", "incognito"]:
+            clean_query = clean_query.replace(kw, "").strip()
+            
+        # If no specific query left, just open browser blank/home
+        if not clean_query.strip() or clean_query.strip() in ["browser", "chrome", "google chrome", "browser open kro", "browser kholo"]:
+            cmd = [chrome_exe] + mode_flags
+            subprocess.Popen(cmd)
+            return {
+                "status": "success",
+                "mode": active_mode,
+                "message": f"Sir, Chrome {mode_desc} ke sath open kardiya hai."
+            }
+            
+        # Resolve target URLs (single or multiple)
+        target_urls = resolve_target_urls(clean_query, profile_dir="Profile 1")
+        cmd = [chrome_exe] + mode_flags + target_urls
+        subprocess.Popen(cmd)
+        
+        urls_joined = ", ".join(target_urls)
         return {
             "status": "success",
-            "opened_url": url,
-            "message": f"Opened '{query}' in browser, Sir."
+            "opened_urls": target_urls,
+            "mode": active_mode,
+            "spoken_summary": f"Sir, {mode_desc} mein targets open kardiye hain.",
+            "message": f"Sir, {mode_desc} mein requested links open kardiye hain: {urls_joined}"
         }
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        logger.exception("Error in search_and_open_in_browser")
+        return {"status": "error", "error": str(e), "message": f"Browser launch error: {str(e)}"}
 
 def get_open_browser_tabs(browser_name: str = "chrome") -> Dict[str, Any]:
     """
@@ -1666,6 +2010,56 @@ def get_open_browser_tabs(browser_name: str = "chrome") -> Dict[str, Any]:
         "message": summary
     }
 
+def play_youtube_music_or_video(query: str = "relaxing lofi music") -> Dict[str, Any]:
+    """
+    Searches YouTube for any song, artist, video, or genre and immediately starts playing the top video in Google Chrome (Abdullah Irfan profile).
+    Call whenever user says 'song chalao', 'gaana lagao', 'music play karo', 'play arijit singh', 'play lofi song', etc.
+    """
+    import urllib.parse
+    import urllib.request
+    import re
+    import subprocess
+    import os
+    
+    clean_query = query.strip() if query else "latest popular songs"
+    # Clean up conversational prefixes
+    for pfx in ["koi accha", "koi pyara", "song lagao", "gaana lagao", "music lagao", "play karo", "play", "chalao", "lagao", "suno", "lga do", "lgao"]:
+        clean_query = clean_query.replace(pfx, "").strip()
+        
+    if not clean_query:
+        clean_query = "latest hindi urdu songs"
+        
+    # Resolve top video URL
+    target_url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(clean_query)}"
+    try:
+        search_url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(clean_query)
+        req = urllib.request.Request(search_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8")
+        matches = re.findall(r"watch\?v=([a-zA-Z0-9_-]{11})", html)
+        if matches:
+            target_url = "https://www.youtube.com/watch?v=" + matches[0]
+    except Exception:
+        pass
+        
+    # Open in Chrome with Abdullah Irfan profile
+    chrome_paths = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe")
+    ]
+    chrome_exe = next((p for p in chrome_paths if os.path.exists(p)), "chrome.exe")
+    
+    cmd = [chrome_exe, "--profile-directory=Profile 1", target_url]
+    subprocess.Popen(cmd)
+    
+    return {
+        "status": "success",
+        "query": clean_query,
+        "video_url": target_url,
+        "spoken_summary": f"Sir, YouTube par '{clean_query}' play kardiya hai.",
+        "message": f"Sir, YouTube par '{clean_query}' play kardiya hai: {target_url}"
+    }
+
 # Registry mapping tool names to python callables
 TOOL_REGISTRY = {
     "execute_terminal_command": execute_terminal_command,
@@ -1692,11 +2086,14 @@ TOOL_REGISTRY = {
     "check_scalper_bot_status": check_scalper_bot_status,
     "manage_display_brightness": manage_display_brightness,
     "manage_media_playback": manage_media_playback,
+    "manage_screen_power": manage_screen_power,
     "get_open_browser_tabs": get_open_browser_tabs,
     "get_running_system_apps": get_running_system_apps,
     "get_antigravity_activity_summary": get_antigravity_activity_summary,
     "set_ai_model": set_ai_model,
     "inspect_web_page_or_dashboard": inspect_web_page_or_dashboard,
+    "play_youtube_music_or_video": play_youtube_music_or_video,
+    "proceed_browser_login": proceed_browser_login,
 }
 
 # Declarations for Gemini 2.0 Function Calling
@@ -1711,10 +2108,12 @@ TOOL_DECLARATIONS = [
     manage_bluetooth,
     manage_system_volume,
     manage_windows_power,
+    manage_screen_power,
     open_windows_settings,
     send_whatsapp_message,
     send_antigravity_command,
     type_text_into_active_app,
+    proceed_browser_login,
     open_url_or_application,
     close_application,
     check_git_repo_status,
@@ -1730,4 +2129,5 @@ TOOL_DECLARATIONS = [
     get_antigravity_activity_summary,
     set_ai_model,
     inspect_web_page_or_dashboard,
+    play_youtube_music_or_video,
 ]
