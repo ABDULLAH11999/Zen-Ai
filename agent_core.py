@@ -483,6 +483,20 @@ class JarvisAgent:
                 {
                     "type": "function",
                     "function": {
+                        "name": "install_or_download_msstore_app",
+                        "description": "Downloads and installs free Windows applications, social media tools, and utilities from the official Microsoft Store via winget and opens the Store product page. Call immediately when user asks 'Instagram download krdo', 'Microsoft Store se Instagram download kro', 'TikTok install krdo', 'Netflix download karo', 'CapCut install karo', etc.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "app_name": {"type": "string", "description": "Name of the app to install from Microsoft Store (e.g. 'Instagram', 'TikTok', 'Netflix', 'CapCut', 'Canva', 'Pinterest', 'Spotify')."}
+                            },
+                            "required": ["app_name"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
                         "name": "check_fdm_download_status",
                         "description": "Checks live download status, progress, remaining files, completed games, and storage in Free Download Manager (FDM) in 'F:\\FDM'. Call immediately when user asks 'FDM pe status dekh ke btao', 'game download kitni hui', 'Fdm ko again dekho', 'FDM check karo', etc.",
                         "parameters": {

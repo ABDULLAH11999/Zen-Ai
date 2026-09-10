@@ -2356,10 +2356,118 @@ def fetch_internet_archive_torrent(query: str):
         
     return None, None, None
 
+MSSTORE_POPULAR_APPS = {
+    "instagram": {"id": "9NBLGGH5L9XT", "name": "Instagram"},
+    "threads": {"id": "9MXBP1FB84CQ", "name": "Threads, an Instagram app"},
+    "tiktok": {"id": "9NH2GPH4JZS4", "name": "TikTok"},
+    "netflix": {"id": "9WZDNCRFJ3TJ", "name": "Netflix"},
+    "whatsapp": {"id": "9NKSQGP7F2NH", "name": "WhatsApp"},
+    "spotify": {"id": "9NCBCSZSJRSB", "name": "Spotify Music"},
+    "capcut": {"id": "XP9KN75RRB9NHS", "name": "CapCut - Video Editor"},
+    "canva": {"id": "9PFDC8X1Q3G9", "name": "Canva"},
+    "pinterest": {"id": "9NBLGGH5GZ17", "name": "Pinterest"},
+    "duolingo": {"id": "9NBLGGH2TG8W", "name": "Duolingo"},
+    "telegram": {"id": "9NZTWSQNTD0S", "name": "Telegram Desktop"},
+    "itunes": {"id": "9PB2MZ1ZMB1S", "name": "iTunes"},
+    "facebook": {"id": "9WZDNCRFJ254", "name": "Facebook"},
+    "slack": {"id": "9WZDNCRDK3WP", "name": "Slack"},
+    "disney": {"id": "9NXQXXLFST89", "name": "Disney+"},
+    "disney+": {"id": "9NXQXXLFST89", "name": "Disney+"},
+    "prime video": {"id": "9P6RC76MSMMJ", "name": "Amazon Prime Video for Windows"},
+    "twitter": {"id": "9WZDNCRFJ140", "name": "X (Twitter)"},
+    "x": {"id": "9WZDNCRFJ140", "name": "X (Twitter)"},
+    "clipchamp": {"id": "9P1J8S7CCWWT", "name": "Microsoft Clipchamp"},
+    "powertoys": {"id": "XP89DCGQ3K6VLD", "name": "Microsoft PowerToys"},
+    "vlc": {"id": "9NBLGGH4VVNH", "name": "VLC"},
+    "zoom": {"id": "XP99J31N5K044T", "name": "Zoom Workplace"}
+}
+
+def query_msstore_app(app_name: str) -> Optional[Dict[str, str]]:
+    """Dynamically finds the Microsoft Store Product ID and name using winget."""
+    clean = app_name.lower().strip()
+    for key, data in MSSTORE_POPULAR_APPS.items():
+        if key == clean or key in clean:
+            return data
+    try:
+        import subprocess
+        import re
+        res = subprocess.run(
+            ["winget", "search", app_name, "--source", "msstore", "--accept-source-agreements"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        for line in res.stdout.splitlines():
+            if "---" in line or "Name" in line or not line.strip():
+                continue
+            match = re.search(r'\b([A-Z0-9]{12,14})\b', line)
+            if match:
+                app_id = match.group(1)
+                name = line[:line.find(app_id)].strip() or app_name.title()
+                return {"name": name, "id": app_id}
+    except Exception:
+        pass
+    return None
+
+def install_or_download_msstore_app(app_name: str) -> Dict[str, Any]:
+    """
+    Downloads and installs free apps/tools from Microsoft Store via winget and launches Store UI.
+    Call when user asks to download or install Instagram, TikTok, Netflix, CapCut, or any Microsoft Store app.
+    """
+    import threading
+    import subprocess
+    import urllib.parse
+    import re
+    
+    clean = re.sub(
+        r'\b(microsoft store|ms store|windows store|store se|store|download karo|download kro|download|install karo|install kro|install|krdo|kardo|kro|karo|ko|mein|me|se|free)\b',
+        '',
+        app_name,
+        flags=re.IGNORECASE
+    ).strip()
+    if not clean:
+        clean = app_name.strip()
+        
+    store_info = query_msstore_app(clean)
+    app_title = store_info["name"] if store_info else clean.title()
+    app_id = store_info["id"] if store_info else None
+    
+    # 1. Open Microsoft Store UI to the specific product or search page
+    try:
+        if app_id:
+            subprocess.Popen(["cmd.exe", "/c", "start", f"ms-windows-store://pdp/?ProductId={app_id}"])
+        else:
+            subprocess.Popen(["cmd.exe", "/c", "start", f"ms-windows-store://search/?query={urllib.parse.quote(clean)}"])
+    except Exception as e:
+        logger.warning(f"Error opening Microsoft Store protocol: {e}")
+
+    # 2. Trigger automated background installation via winget
+    def _run_install():
+        try:
+            if app_id:
+                cmd = ["winget", "install", "--id", app_id, "--source", "msstore", "--accept-source-agreements", "--accept-package-agreements", "--silent"]
+            else:
+                cmd = ["winget", "install", clean, "--source", "msstore", "--accept-source-agreements", "--accept-package-agreements", "--silent"]
+            subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        except Exception as err:
+            logger.warning(f"Background winget install error for {app_title}: {err}")
+
+    threading.Thread(target=_run_install, daemon=True).start()
+
+    spoken = f"Sir, '{app_title}' ko Microsoft Store se download aur install karne ke liye request initiate kardi hai aur Store page open kardiya hai."
+    return {
+        "status": "success",
+        "app_name": app_title,
+        "product_id": app_id,
+        "source": "Microsoft Store",
+        "spoken_summary": spoken,
+        "message": f"Sir, '{app_title}' ko Microsoft Store se download aur install karne ke liye request initiate kardi hai aur Store page open kardiya hai."
+    }
+
 def download_software_or_game(software_name: str, use_fdm: Optional[bool] = None, link_type: Optional[str] = "torrent") -> Dict[str, Any]:
     """
     Downloads official Windows (x64) installers, software, tools, and games.
-    Supports live scraping of verified game setups from FitGirl Repacks, Internet Archive (archive.org), and SteamRIP.
+    Supports Microsoft Store apps (Instagram, TikTok, Netflix, etc.), live scraping from FitGirl Repacks, Internet Archive (archive.org), and SteamRIP.
     Automatically extracts high-speed Magnet/Torrent files and launches them in Free Download Manager (FDM) with auto-Enter confirmation.
     """
     import os
@@ -2391,6 +2499,13 @@ def download_software_or_game(software_name: str, use_fdm: Optional[bool] = None
     if use_fdm is None:
         # Default to True whenever FDM is installed on the machine
         use_fdm = bool(fdm_exe)
+
+    # Check Microsoft Store request or popular Microsoft Store free apps
+    is_msstore_explicit = any(k in clean_name for k in ["microsoft store", "ms store", "windows store", "store se", "msstore", "store download"])
+    is_common_msstore_app = any(app_k in clean_name for app_k in ["instagram", "threads", "tiktok", "netflix", "capcut", "pinterest", "duolingo", "canva", "clipchamp", "prime video"])
+    
+    if is_msstore_explicit or (is_common_msstore_app and not ("game" in clean_name or "steamrip" in clean_name or "fitgirl" in clean_name)):
+        return install_or_download_msstore_app(clean_name if clean_name else software_name)
 
     is_archive_explicit = any(k in clean_name for k in ["internet archive", "archive.org", "archive", "archive se"])
     is_torrent_request = "torrent" in clean_name or link_type == "torrent" or is_archive_explicit
@@ -2855,6 +2970,7 @@ TOOL_REGISTRY = {
     "proceed_browser_login": proceed_browser_login,
     "fetch_web_knowledge_and_facts": fetch_web_knowledge_and_facts,
     "download_software_or_game": download_software_or_game,
+    "install_or_download_msstore_app": install_or_download_msstore_app,
     "check_fdm_download_status": check_fdm_download_status,
 }
 
@@ -2896,5 +3012,6 @@ TOOL_DECLARATIONS = [
     play_youtube_music_or_video,
     fetch_web_knowledge_and_facts,
     download_software_or_game,
+    install_or_download_msstore_app,
     check_fdm_download_status,
 ]
