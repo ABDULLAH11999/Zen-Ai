@@ -158,13 +158,40 @@ class JarvisAgent:
                 {
                     "type": "function",
                     "function": {
-                        "name": "send_whatsapp_message",
-                        "description": "Opens WhatsApp and sends a message to contact.",
+                        "name": "open_whatsapp",
+                        "description": "Opens WhatsApp using Desktop shortcuts ('WhatsApp Web.lnk') or WhatsApp Web in Chrome (Profile 1). If contact_name is provided, enters that contact's chat directly. Call when user asks 'WhatsApp open karo', 'WhatsApp chalao', 'WhatsApp kholo'.",
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "contact_or_phone": {"type": "string"},
-                                "message": {"type": "string"}
+                                "contact_name": {"type": "string", "description": "Optional contact full name to navigate to directly."}
+                            }
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "open_whatsapp_contact_chat",
+                        "description": "Searches for a contact's full name in WhatsApp and enters their chat without sending any message. Call when user asks 'WhatsApp pe Ali ki chat open karo', 'WhatsApp mein contact name kholo', 'Ali ke chat pe jao', etc.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "contact_name": {"type": "string", "description": "The exact or full contact name to search and open in WhatsApp."}
+                            },
+                            "required": ["contact_name"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "send_whatsapp_message",
+                        "description": "Opens WhatsApp, searches for the contact's full name or phone number, enters their chat, and sends the exact user-specified message. Call when user asks 'whatsapp pe [Contact] ko [Message] type krke send krdo', 'WhatsApp pe [Contact] ko message bhejo: [Message]', '[Contact] ko [Message] likh ke send kardo', etc.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "contact_or_phone": {"type": "string", "description": "Contact full name (e.g. 'abdul rehman office', 'Ali Irfan') or phone number."},
+                                "message": {"type": "string", "description": "The EXACT message text to type and send (e.g. 'test', 'hello')."}
                             },
                             "required": ["contact_or_phone", "message"]
                         }
@@ -441,14 +468,28 @@ class JarvisAgent:
                     "type": "function",
                     "function": {
                         "name": "download_software_or_game",
-                        "description": "Downloads official Windows x64 applications, tools, software, or games. If user mentions 'FDM' (Free Download Manager), downloads via FDM. Otherwise, downloads into Windows Downloads folder via Chrome. Call immediately when user asks 'tradingview download krdo FDM mei', 'vscode download karo', 'git download karo', etc.",
+                        "description": "Downloads official Windows x64 software or scrapes games from SteamRIP, FitGirl, OceanOfGames. Extracts Torrent/MegaDB/Magnet links and fallback hosters (Buzzheavier, Gofile, 1fichier) into Free Download Manager (FDM) or Chrome. Call immediately when user asks 'Steamrip se Detroit become human game download kro FDM se', 'game ka torrent file drag krke FDM pe download lgao', 'tradingview download krdo FDM mei', etc.",
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "software_name": {"type": "string", "description": "Name of the application or game (e.g. 'tradingview', 'vscode', 'discord', 'steam', 'vlc')."},
-                                "use_fdm": {"type": "boolean", "description": "True if user asked to download in FDM, False/null otherwise."}
+                                "software_name": {"type": "string", "description": "Name of the application or game (e.g. 'Detroit become human steamrip', 'tradingview', 'vscode', 'forza horizon 4 steamrip')."},
+                                "use_fdm": {"type": "boolean", "description": "True if user asked to download in FDM, False/null otherwise."},
+                                "link_type": {"type": "string", "description": "'torrent' for torrent/megadb, 'direct' for buzzheavier/1fichier/gofile."}
                             },
                             "required": ["software_name"]
+                        }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "check_fdm_download_status",
+                        "description": "Checks live download status, progress, remaining files, completed games, and storage in Free Download Manager (FDM) in 'F:\\FDM'. Call immediately when user asks 'FDM pe status dekh ke btao', 'game download kitni hui', 'Fdm ko again dekho', 'FDM check karo', etc.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string", "description": "Optional game or file name to check."}
+                            }
                         }
                     }
                 }
@@ -464,7 +505,7 @@ class JarvisAgent:
                 messages=messages,
                 tools=groq_tools,
                 tool_choice="auto",
-                max_tokens=250,
+                max_tokens=600,
                 temperature=0.5
             )
             

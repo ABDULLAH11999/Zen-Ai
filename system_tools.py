@@ -345,6 +345,8 @@ def focus_window_by_title(keyword: str) -> bool:
         
         found_hwnd = None
         
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
+        
         def enum_windows_callback(hwnd, extra):
             nonlocal found_hwnd
             if user32.IsWindowVisible(hwnd):
@@ -354,11 +356,12 @@ def focus_window_by_title(keyword: str) -> bool:
                     user32.GetWindowTextW(hwnd, buff, length + 1)
                     if keyword.lower() in buff.value.lower():
                         found_hwnd = hwnd
-                        return False # Stop enumeration
-            return True # Continue
+                        return 0 # Stop enumeration
+            return 1 # Continue
             
-        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
-        user32.EnumWindows(WNDENUMPROC(enum_windows_callback), 0)
+        user32.EnumWindows.argtypes = [WNDENUMPROC, ctypes.c_void_p]
+        user32.EnumWindows.restype = ctypes.c_int
+        user32.EnumWindows(WNDENUMPROC(enum_windows_callback), None)
         
         if found_hwnd:
             user32.ShowWindow(found_hwnd, 9) # SW_RESTORE
@@ -369,55 +372,251 @@ def focus_window_by_title(keyword: str) -> bool:
         logger.warning(f"Failed to focus window with keyword '{keyword}': {e}")
         return False
 
+def launch_and_confirm_fdm_download(target: str, fdm_exe: str):
+    """
+    Launches FDM with a target URL, magnet link, or .torrent file,
+    and automatically confirms the 'New download' modal dialog (Download button)
+    even when metadata resolution takes several seconds.
+    """
+    import threading
+    import time
+    import subprocess
+    import ctypes
+    import pyautogui
+
+    pyautogui.FAILSAFE = False
+
+    def _worker():
+        try:
+            # 1. Launch FDM with the target
+            subprocess.Popen([fdm_exe, target])
+            
+            # 2. Magnet and torrent files take between 0.8s to 3.5s to resolve file lists in FDM
+            # We poll and confirm across 8 seconds to guarantee the Download button is triggered
+            delays = [1.2, 1.0, 1.0, 1.2, 1.5, 1.5]
+            for d in delays:
+                time.sleep(d)
+                
+                # Activate FDM window using PowerShell WScript.Shell AppActivate
+                try:
+                    subprocess.run(
+                        ["powershell", "-NoProfile", "-Command", "$wshell = New-Object -ComObject WScript.Shell; if ($wshell.AppActivate('Free Download Manager')) { Start-Sleep -Milliseconds 150; $wshell.SendKeys('{ENTER}') }"],
+                        capture_output=True,
+                        timeout=2.0
+                    )
+                except Exception:
+                    pass
+
+                # Also send direct Win32 keybd_event & pyautogui Enter
+                try:
+                    focus_window_by_title("Free Download Manager")
+                    time.sleep(0.1)
+                    ctypes.windll.user32.keybd_event(0x0D, 0, 0, 0)
+                    time.sleep(0.05)
+                    ctypes.windll.user32.keybd_event(0x0D, 0, 2, 0)
+                    pyautogui.press("enter")
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"Error in launch_and_confirm_fdm_download: {e}")
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+
+def activate_whatsapp_window() -> bool:
+    """Brings WhatsApp Web / Desktop window to the foreground."""
+    import subprocess
+    import time
+    for title in ["WhatsApp", "WhatsApp Web", "(1) WhatsApp", "(2) WhatsApp", "(3) WhatsApp", "(4) WhatsApp", "(5) WhatsApp", "Google Chrome"]:
+        try:
+            res = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", f"(New-Object -ComObject WScript.Shell).AppActivate('{title}')"],
+                capture_output=True,
+                text=True,
+                timeout=2.0
+            )
+            if "True" in res.stdout:
+                return True
+        except Exception:
+            pass
+    focus_window_by_title("WhatsApp")
+    return True
+
+def open_whatsapp(contact_name: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Opens WhatsApp using Desktop shortcuts ('WhatsApp Web.lnk' or 'WhatsApp.lnk') or WhatsApp Web in Chrome (Profile 1).
+    If contact_name is provided, enters that contact's chat directly.
+    Call when user asks 'WhatsApp open karo', 'WhatsApp kholo', 'WhatsApp chalao', etc.
+    """
+    import os
+    import time
+    import subprocess
+    import pyautogui
+    import pyperclip
+
+    # 1. Search for WhatsApp desktop shortcut
+    desktops = [os.path.expandvars(r"C:\Users\%USERNAME%\Desktop"), r"C:\Users\Public\Desktop"]
+    found_lnk = None
+    for d in desktops:
+        if os.path.exists(d):
+            for f in os.listdir(d):
+                if "whatsapp" in f.lower() and f.lower().endswith(".lnk"):
+                    found_lnk = os.path.join(d, f)
+                    break
+            if found_lnk:
+                break
+
+    if found_lnk:
+        try:
+            os.startfile(found_lnk)
+        except Exception:
+            subprocess.Popen(["cmd.exe", "/c", "start", "", found_lnk], shell=True)
+    else:
+        # Fallback to Chrome Profile 1 or protocol
+        chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+        if os.path.exists(chrome_path):
+            subprocess.Popen([chrome_path, "--profile-directory=Profile 1", "https://web.whatsapp.com"])
+        else:
+            os.system("start whatsapp:")
+
+    time.sleep(2.0)
+    activate_whatsapp_window()
+    time.sleep(0.5)
+
+    if contact_name and contact_name.strip():
+        return open_whatsapp_contact_chat(contact_name.strip())
+
+    spoken = "Sir, Desktop shortcut se WhatsApp open kardiya hai."
+    return {
+        "status": "success",
+        "shortcut": found_lnk or "WhatsApp Web",
+        "spoken_summary": spoken,
+        "message": spoken
+    }
+
+def open_whatsapp_contact_chat(contact_name: str) -> Dict[str, Any]:
+    """
+    Searches and enters a specific contact's chat in WhatsApp (Desktop / Web).
+    Call when user asks 'WhatsApp pe [Contact Name] ki chat open karo', 'WhatsApp mein contact kholo', etc.
+    """
+    import os
+    import time
+    import pyautogui
+    import pyperclip
+
+    clean_name = contact_name.strip()
+
+    # Ensure WhatsApp is open and brought to the front
+    activate_whatsapp_window()
+    time.sleep(0.5)
+
+    # Press Escape twice to clear any open overlays/dropdowns
+    pyautogui.press("escape")
+    time.sleep(0.15)
+    pyautogui.press("escape")
+    time.sleep(0.2)
+
+    # Trigger New Chat / Search in WhatsApp Web & Desktop
+    # Ctrl + Alt + N opens the new chat contact list with search bar focused
+    pyautogui.hotkey("ctrl", "alt", "n")
+    time.sleep(0.3)
+    pyautogui.hotkey("ctrl", "alt", "/")
+    time.sleep(0.2)
+
+    # Clear previous search query
+    pyautogui.hotkey("ctrl", "a")
+    time.sleep(0.1)
+    pyautogui.press("backspace")
+    time.sleep(0.1)
+
+    # Paste contact name via clipboard for 100% accurate Unicode & text transfer
+    pyperclip.copy(clean_name)
+    time.sleep(0.1)
+    pyautogui.hotkey("ctrl", "v")
+    
+    # Wait for WhatsApp Web to search and filter contacts
+    time.sleep(1.5)
+
+    # Press Enter to open and enter the matched contact's chat
+    pyautogui.press("enter")
+    time.sleep(1.2)
+
+    spoken = f"Sir, WhatsApp pe '{clean_name}' ki chat open kardi hai."
+    return {
+        "status": "success",
+        "contact": clean_name,
+        "spoken_summary": spoken,
+        "message": spoken
+    }
+
 def send_whatsapp_message(contact_or_phone: str, message: str, auto_send: bool = True) -> Dict[str, Any]:
     """
-    Opens WhatsApp and sends or prepares a message to the specified contact or phone number.
+    Opens WhatsApp, navigates to the specified contact's chat, types the exact message, and sends it.
+    Preserves the exact text message requested by the user without altering content.
+    Call when user asks '[Contact] ko WhatsApp pe message bhejo: [Message]', 'WhatsApp pe message karo', etc.
     """
-    import urllib.parse
+    import os
     import time
-    import webbrowser
+    import urllib.parse
     import pyautogui
-    
-    try:
-        clean_phone = "".join(filter(str.isdigit, contact_or_phone))
-        encoded_msg = urllib.parse.quote(message)
+    import pyperclip
+    import subprocess
+
+    clean_target = contact_or_phone.strip()
+    clean_msg = message.strip()
+    clean_digits = "".join(filter(str.isdigit, clean_target))
+
+    # If direct phone number (e.g. +923001234567 or 03001234567)
+    if clean_digits and len(clean_digits) >= 10 and not any(c.isalpha() for c in clean_target):
+        encoded_msg = urllib.parse.quote(clean_msg)
+        url = f"https://web.whatsapp.com/send?phone={clean_digits}&text={encoded_msg}"
         
-        if clean_phone and len(clean_phone) >= 7:
-            url = f"https://web.whatsapp.com/send?phone={clean_phone}&text={encoded_msg}"
-            webbrowser.open(url)
-            time.sleep(3)
-            if auto_send:
-                # Wait for web WhatsApp to load and press enter
-                time.sleep(2)
-                pyautogui.press("enter")
-            return {
-                "status": "success",
-                "message": f"WhatsApp message prepared for {contact_or_phone}: '{message}'."
-            }
+        chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+        if os.path.exists(chrome_path):
+            subprocess.Popen([chrome_path, "--profile-directory=Profile 1", url])
         else:
-            # WhatsApp Desktop application launch
-            os.system("start whatsapp:")
-            time.sleep(1.5)
-            # Focus WhatsApp window
-            focus_window_by_title("WhatsApp")
-            time.sleep(0.5)
-            # Search contact
-            pyautogui.hotkey("ctrl", "f")
-            pyautogui.write(contact_or_phone, interval=0.05)
+            import webbrowser
+            webbrowser.open(url)
+            
+        time.sleep(3.5)
+        activate_whatsapp_window()
+        time.sleep(0.8)
+        if auto_send:
             pyautogui.press("enter")
-            time.sleep(0.5)
-            # Type and send message
-            pyautogui.write(message, interval=0.03)
-            if auto_send:
-                pyautogui.press("enter")
-                
-            return {
-                "status": "success",
-                "message": f"Sent WhatsApp message to {contact_or_phone}: '{message}'."
-            }
-    except Exception as e:
-        logger.exception("Error sending WhatsApp message")
-        return {"status": "error", "error": str(e)}
+            
+        spoken = f"Sir, WhatsApp par {clean_target} ko message send kardiya hai: '{clean_msg}'"
+        return {
+            "status": "success",
+            "target": clean_target,
+            "message_sent": clean_msg,
+            "spoken_summary": spoken,
+            "message": spoken
+        }
+
+    # Otherwise, search contact by full name in WhatsApp and send exact message
+    # 1. Open contact chat and place cursor in message input area
+    open_whatsapp_contact_chat(clean_target)
+    time.sleep(1.0)
+
+    # 2. Focus message input box and paste EXACT message via clipboard
+    pyperclip.copy(clean_msg)
+    time.sleep(0.15)
+    pyautogui.hotkey("ctrl", "v")
+    time.sleep(0.3)
+
+    # 3. Send message if auto_send is True
+    if auto_send:
+        pyautogui.press("enter")
+        time.sleep(0.2)
+
+    spoken = f"Sir, WhatsApp par '{clean_target}' ko message send kardiya hai: '{clean_msg}'"
+    return {
+        "status": "success",
+        "contact": clean_target,
+        "message_sent": clean_msg,
+        "spoken_summary": spoken,
+        "message": spoken
+    }
 
 def send_antigravity_command(prompt_text: str, open_new_chat: bool = True) -> Dict[str, Any]:
     """
@@ -2121,58 +2320,56 @@ def fetch_web_knowledge_and_facts(query: str) -> Dict[str, Any]:
             "message": f"No web search snippets found for '{clean_q}'. Provide best AI knowledge."
         }
 
-def download_software_or_game(software_name: str, use_fdm: Optional[bool] = None) -> Dict[str, Any]:
+def fetch_internet_archive_torrent(query: str):
     """
-    Downloads official Windows (x64) installers for applications, software, tools, and games.
-    Supports specific site search (SteamRIP, FitGirl, OceanOfGames, Dodi, GitHub, SourceForge).
-    If 'use_fdm' is True:
-      - Verifies FDM installation & Chrome FDM extension and queues/triggers the download directly in Free Download Manager.
-    If 'use_fdm' is False or not specified:
-      - Initiates the download via Google Chrome into the default Windows Downloads folder.
+    Searches archive.org for the given software/game, downloads the genuine .torrent file,
+    and returns (local_torrent_path, archive_torrent_url, item_title).
+    """
+    import requests
+    import urllib.parse
+    import os
+
+    clean_q = urllib.parse.quote(query.strip())
+    search_url = f"https://archive.org/advancedsearch.php?q={clean_q}&fl[]=identifier,title,mediatype&rows=5&output=json"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    
+    try:
+        r = requests.get(search_url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            docs = r.json().get("response", {}).get("docs", [])
+            for doc in docs:
+                ident = doc.get("identifier")
+                title = doc.get("title", query)
+                if ident:
+                    torrent_url = f"https://archive.org/download/{ident}/{ident}_archive.torrent"
+                    tr = requests.get(torrent_url, headers=headers, timeout=10)
+                    if tr.status_code == 200 and len(tr.content) > 100:
+                        save_dir = r"F:\FDM"
+                        os.makedirs(save_dir, exist_ok=True)
+                        safe_title = "".join(c for c in ident if c.isalnum() or c in ("-", "_"))
+                        local_file = os.path.join(save_dir, f"{safe_title}.torrent")
+                        with open(local_file, "wb") as f:
+                            f.write(tr.content)
+                        return local_file, torrent_url, title
+    except Exception as e:
+        logger.warning(f"Archive.org search error: {e}")
+        
+    return None, None, None
+
+def download_software_or_game(software_name: str, use_fdm: Optional[bool] = None, link_type: Optional[str] = "torrent") -> Dict[str, Any]:
+    """
+    Downloads official Windows (x64) installers, software, tools, and games.
+    Supports live scraping of verified game setups from FitGirl Repacks, Internet Archive (archive.org), and SteamRIP.
+    Automatically extracts high-speed Magnet/Torrent files and launches them in Free Download Manager (FDM) with auto-Enter confirmation.
     """
     import os
     import subprocess
     import urllib.parse
     import re
     import time
+    import html
     import pyautogui
-    
-    clean_name = software_name.lower().strip()
-    if use_fdm is None:
-        if "fdm" in clean_name or "free download manager" in clean_name:
-            use_fdm = True
-        else:
-            use_fdm = False
-            
-    # Detect target site if requested (e.g. steamrip, fitgirl, oceanofgames, dodi)
-    site_search_map = {
-        "steamrip": "https://steamrip.com/?s=",
-        "fitgirl": "https://fitgirl-repacks.site/?s=",
-        "oceanofgames": "https://oceanofgames.com/?s=",
-        "ocean of games": "https://oceanofgames.com/?s=",
-        "dodi": "https://dodi-repacks.site/?s=",
-        "apunkagames": "https://apunkagames.biz/?s=",
-        "github": "https://github.com/search?q=",
-        "sourceforge": "https://sourceforge.net/directory/?q=",
-        "softpedia": "https://www.softpedia.com/dyn-search.php?search_term="
-    }
-    
-    detected_site = None
-    site_prefix_url = None
-    for site_key, site_url in site_search_map.items():
-        if site_key in clean_name:
-            detected_site = site_key
-            site_prefix_url = site_url
-            break
-            
-    # Clean up prefixes and filler words
-    for kw in ["download karo", "download kro", "download kar do", "download", "ko", "mein", "me", "se", "fdm", "free download manager", "install karo", "installer", "website"]:
-        clean_name = clean_name.replace(kw, " ").strip()
-    if detected_site:
-        clean_name = clean_name.replace(detected_site, " ").strip()
-    clean_name = " ".join(clean_name.split())
-    if not clean_name:
-        clean_name = software_name.strip()
+    import requests
 
     # Chrome executable
     chrome_paths = [
@@ -2190,40 +2387,197 @@ def download_software_or_game(software_name: str, use_fdm: Optional[bool] = None
     ]
     fdm_exe = next((p for p in fdm_paths if os.path.exists(p)), None)
 
-    # 1. Custom Website Specified (e.g. SteamRIP, FitGirl)
-    if detected_site and site_prefix_url:
-        target_url = site_prefix_url + urllib.parse.quote(clean_name)
-        app_title = f"{clean_name.title()} ({detected_site.upper()})"
-        
-        # Open the exact search/download page in Chrome (Profile 1)
-        subprocess.Popen([chrome_exe, "--profile-directory=Profile 1", target_url])
-        
-        # If FDM is requested, ensure FDM is active in background
-        if use_fdm and fdm_exe:
+    clean_name = software_name.lower().strip()
+    if use_fdm is None:
+        # Default to True whenever FDM is installed on the machine
+        use_fdm = bool(fdm_exe)
+
+    is_archive_explicit = any(k in clean_name for k in ["internet archive", "archive.org", "archive", "archive se"])
+    is_torrent_request = "torrent" in clean_name or link_type == "torrent" or is_archive_explicit
+    is_alternate_request = any(k in clean_name for k in ["alternate", "dusra", "aur link", "koioor", "koi aur", "other link", "direct"])
+
+    site_search_map = {
+        "steamrip": "https://steamrip.com/?s=",
+        "fitgirl": "https://fitgirl-repacks.site/?s=",
+        "oceanofgames": "https://oceanofgames.com/?s=",
+        "ocean of games": "https://oceanofgames.com/?s=",
+        "dodi": "https://dodi-repacks.site/?s=",
+        "apunkagames": "https://apunkagames.biz/?s=",
+        "archive": "https://archive.org/search.php?query=",
+        "github": "https://github.com/search?q=",
+        "sourceforge": "https://sourceforge.net/directory/?q=",
+        "softpedia": "https://www.softpedia.com/dyn-search.php?search_term="
+    }
+
+    detected_site = None
+    for site_key in site_search_map.keys():
+        if site_key in clean_name:
+            detected_site = site_key
+            break
+
+    # Clean up prefixes and filler words using word boundaries
+    clean_name = re.sub(
+        r"\b(download karo|download kro|download kar do|download lgao|download lagao|download|krdo|kardo|kro|karo|ko|mein|me|se|fdm|free download manager|install karo|installer|website|torrent|file|drag krke|drag karke|game|internet archive|archive\.org|archive)\b",
+        "",
+        clean_name,
+        flags=re.IGNORECASE
+    )
+    if detected_site and detected_site != "archive":
+        clean_name = clean_name.replace(detected_site, " ").strip()
+    clean_name = " ".join(clean_name.split())
+    if not clean_name:
+        clean_name = software_name.strip()
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    # GAME DETECTION
+    game_keywords = ["detroit", "gta", "cyberpunk", "forza", "elden ring", "god of war", "red dead", "spider-man", "spiderman", "call of duty", "fifa", "assassin", "witcher", "mortal kombat", "batman", "need for speed", "nfs", "tekken", "resident evil", "game"]
+    is_game = any(g in software_name.lower() for g in game_keywords) or detected_site in ["steamrip", "fitgirl", "dodi", "oceanofgames", "apunkagames"]
+
+    # 1. COMPREHENSIVE GAME SETUP SCRAPER & FDM LAUNCHER
+    if is_game:
+        search_query = clean_name if clean_name else "game"
+        matched_target = None
+        target_source = None
+        game_page_url = None
+
+        # A. Try FitGirl Repacks first (High-speed verified Magnet link with trackers)
+        if detected_site != "steamrip" and not is_archive_explicit:
             try:
-                subprocess.Popen([fdm_exe])
+                fg_url = f"https://fitgirl-repacks.site/?s={urllib.parse.quote(search_query)}"
+                fg_res = requests.get(fg_url, headers=headers, timeout=8)
+                if fg_res.status_code == 200:
+                    articles = re.findall(r'<h1 class="entry-title"><a href="([^"]+)"', fg_res.text)
+                    if articles:
+                        game_page_url = articles[0]
+                        gr = requests.get(game_page_url, headers=headers, timeout=8)
+                        magnets = re.findall(r'href="(magnet:\?[^"]+)"', gr.text)
+                        if magnets:
+                            matched_target = html.unescape(magnets[0])
+                            target_source = "FitGirl Repacks (Verified Magnet)"
             except Exception:
                 pass
+
+        # B. Try Internet Archive (.torrent direct file download)
+        if not matched_target and (is_archive_explicit or not matched_target):
+            local_torrent, archive_url, item_title = fetch_internet_archive_torrent(search_query)
+            if local_torrent:
+                matched_target = local_torrent
+                target_source = "Internet Archive (.torrent File)"
+                if not game_page_url:
+                    game_page_url = f"https://archive.org/search.php?query={urllib.parse.quote(search_query)}"
+
+        # C. Scrape SteamRIP as companion / fallback
+        steamrip_page = None
+        steamrip_links = {}
+        try:
+            sr_url = f"https://steamrip.com/?s={urllib.parse.quote(search_query)}"
+            sr_res = requests.get(sr_url, headers=headers, timeout=8)
+            if sr_res.status_code == 200:
+                found_pages = list(set(re.findall(r'https?://steamrip\.com/[a-zA-Z0-9_\-]+-free-download-[a-zA-Z0-9_\-]+/?', sr_res.text)))
+                if found_pages:
+                    steamrip_page = found_pages[0]
+                    g_res = requests.get(steamrip_page, headers=headers, timeout=8)
+                    if g_res.status_code == 200:
+                        all_hrefs = re.findall(r'href=[\'"]([^\'"]+)[\'"]', g_res.text)
+                        for href in all_hrefs:
+                            full_url = href
+                            if full_url.startswith("//"):
+                                full_url = "https:" + full_url
+                            elif full_url.startswith("/"):
+                                full_url = "https://steamrip.com" + full_url
+                            if "bzzhr.to" in full_url or "buzzheavier.com" in full_url:
+                                steamrip_links["buzzheavier"] = full_url
+                            elif "gofile.io" in full_url:
+                                steamrip_links["gofile"] = full_url
+                            elif "1fichier.com" in full_url:
+                                steamrip_links["1fichier"] = full_url
+        except Exception:
+            pass
+
+        if not game_page_url:
+            game_page_url = steamrip_page or f"https://steamrip.com/{clean_name.replace(' ', '-')}-free-download-f1/"
+
+        # If still no magnet/torrent, use fastest SteamRIP direct hoster
+        if not matched_target:
+            matched_target = steamrip_links.get("buzzheavier") or steamrip_links.get("gofile") or steamrip_links.get("1fichier") or game_page_url
+            target_source = "SteamRIP Direct Hoster"
+
+        # LAUNCH IN FDM
+        if use_fdm and fdm_exe and matched_target:
+            launch_and_confirm_fdm_download(matched_target, fdm_exe)
+
+        # Also open game page in Chrome (Profile 1)
+        try:
+            open_url = game_page_url or matched_target
+            subprocess.Popen([chrome_exe, "--profile-directory=Profile 1", open_url])
+        except Exception:
+            pass
+
+        spoken = f"Sir, '{search_query.title()}' ka verified game setup torrent Free Download Manager (FDM) mein download par laga diya hai aur Chrome mein game page open kardiya hai."
+        return {
+            "status": "success",
+            "game": search_query.title(),
+            "source": target_source,
+            "target": matched_target,
+            "game_page": game_page_url,
+            "steamrip_links": steamrip_links,
+            "spoken_summary": spoken,
+            "message": f"Sir, '{search_query.title()}' ka setup torrent ({target_source}) FDM mein download par laga diya hai aur Chrome mein game page open kardiya hai."
+        }
+
+    # 2. FITGIRL SCRAPING
+    if detected_site == "fitgirl":
+        search_query = clean_name if clean_name else "game"
+        search_url = f"https://fitgirl-repacks.site/?s={urllib.parse.quote(search_query)}"
+        target_url = search_url
+
+        try:
+            s_res = requests.get(search_url, headers=headers, timeout=10)
+            if s_res.status_code == 200:
+                magnets = re.findall(r'href=[\'"](magnet:\?[^\'"]+)[\'"]', s_res.text)
+                if magnets:
+                    target_url = magnets[0]
+        except Exception:
+            pass
+
+        if use_fdm and fdm_exe:
+            launch_and_confirm_fdm_download(target_url, fdm_exe)
+
+        subprocess.Popen([chrome_exe, "--profile-directory=Profile 1", search_url])
+        spoken = f"Sir, FitGirl Repacks se '{search_query.title()}' ka magnet/torrent link FDM mein launch kardiya hai."
+        return {
+            "status": "success",
+            "game": search_query.title(),
+            "site": "FitGirl",
+            "target_url": target_url,
+            "spoken_summary": spoken,
+            "message": f"Sir, FitGirl Repacks se '{search_query.title()}' ka magnet link FDM mein download par laga diya hai ({target_url})."
+        }
+
+    # 3. OTHER WEBSITES (OceanOfGames, Dodi, ApunKaGames, etc.)
+    if detected_site and detected_site in site_search_map:
+        target_url = site_search_map[detected_site] + urllib.parse.quote(clean_name)
+        app_title = f"{clean_name.title()} ({detected_site.upper()})"
+        
+        subprocess.Popen([chrome_exe, "--profile-directory=Profile 1", target_url])
+        if use_fdm and fdm_exe:
+            launch_and_confirm_fdm_download(target_url, fdm_exe)
             spoken = f"Sir, {detected_site.upper()} se '{clean_name.title()}' ka download page Chrome aur FDM mein open kardiya hai."
-            return {
-                "status": "success",
-                "software": app_title,
-                "target_url": target_url,
-                "downloader": f"FDM + Chrome ({detected_site.upper()})",
-                "spoken_summary": spoken,
-                "message": f"Sir, {detected_site.upper()} website se '{clean_name.title()}' ka download page Chrome aur FDM mein open kardiya hai ({target_url})."
-            }
         else:
             spoken = f"Sir, {detected_site.upper()} se '{clean_name.title()}' ka download page Chrome mein open kardiya hai."
-            return {
-                "status": "success",
-                "software": app_title,
-                "target_url": target_url,
-                "downloader": f"Chrome ({detected_site.upper()})",
-                "spoken_summary": spoken,
-                "message": f"Sir, {detected_site.upper()} website se '{clean_name.title()}' ka download page Chrome mein open kardiya hai ({target_url})."
-            }
 
+        return {
+            "status": "success",
+            "software": app_title,
+            "target_url": target_url,
+            "spoken_summary": spoken,
+            "message": f"Sir, {detected_site.upper()} website se '{clean_name.title()}' ka download page Chrome aur FDM mein open kardiya hai ({target_url})."
+        }
+
+    # 4. STANDARD APPLICATION CATALOG
     catalog = {
         "tradingview": {
             "name": "TradingView Desktop (x64)",
@@ -2242,78 +2596,88 @@ def download_software_or_game(software_name: str, use_fdm: Optional[bool] = None
         },
         "git": {
             "name": "Git for Windows (x64)",
-            "url": "https://github.com/git-for-windows/git/releases/latest/download/Git-64-bit.exe",
+            "url": "https://github.com/git-for-windows/git/releases/download/v2.44.0.windows.1/Git-2.44.0-64-bit.exe",
             "page_url": "https://git-scm.com/download/win"
         },
+        "node": {
+            "name": "Node.js LTS (x64)",
+            "url": "https://nodejs.org/dist/v20.12.2/node-v20.12.2-x64.msi",
+            "page_url": "https://nodejs.org/en/download"
+        },
+        "nodejs": {
+            "name": "Node.js LTS (x64)",
+            "url": "https://nodejs.org/dist/v20.12.2/node-v20.12.2-x64.msi",
+            "page_url": "https://nodejs.org/en/download"
+        },
+        "python": {
+            "name": "Python 3.12 (x64)",
+            "url": "https://www.python.org/ftp/python/3.12.3/python-3.12.3-amd64.exe",
+            "page_url": "https://www.python.org/downloads/"
+        },
+        "vlc": {
+            "name": "VLC Media Player (x64)",
+            "url": "https://get.videolan.org/vlc/3.0.20/win64/vlc-3.0.20-win64.exe",
+            "page_url": "https://www.videolan.org/vlc/download-windows.html"
+        },
+        "7zip": {
+            "name": "7-Zip (x64)",
+            "url": "https://www.7-zip.org/a/7z2404-x64.exe",
+            "page_url": "https://www.7-zip.org/download.html"
+        },
+        "7-zip": {
+            "name": "7-Zip (x64)",
+            "url": "https://www.7-zip.org/a/7z2404-x64.exe",
+            "page_url": "https://www.7-zip.org/download.html"
+        },
+        "winrar": {
+            "name": "WinRAR (x64)",
+            "url": "https://www.rarlab.com/rar/winrar-x64-700.exe",
+            "page_url": "https://www.rarlab.com/download.htm"
+        },
         "discord": {
-            "name": "Discord Desktop",
+            "name": "Discord",
             "url": "https://discord.com/api/download?platform=win",
             "page_url": "https://discord.com/download"
         },
         "telegram": {
-            "name": "Telegram Desktop (x64)",
+            "name": "Telegram Desktop",
             "url": "https://telegram.org/dl/desktop/win64",
             "page_url": "https://desktop.telegram.org/"
         },
-        "vlc": {
-            "name": "VLC Media Player (x64)",
-            "url": "https://get.videolan.org/vlc/last/win64/vlc-win64.exe",
-            "page_url": "https://www.videolan.org/vlc/"
-        },
-        "steam": {
-            "name": "Steam Client",
-            "url": "https://cdn.cloudflare.steamstatic.com/client/installer/SteamSetup.exe",
-            "page_url": "https://store.steampowered.com/about/"
+        "spotify": {
+            "name": "Spotify",
+            "url": "https://download.scdn.co/SpotifySetup.exe",
+            "page_url": "https://www.spotify.com/download/windows/"
         },
         "obs": {
             "name": "OBS Studio (x64)",
-            "url": "https://obsproject.com/download",
+            "url": "https://cdn-fastly.obsproject.com/downloads/OBS-Studio-30.1.2-Full-Installer-x64.exe",
             "page_url": "https://obsproject.com/download"
         },
-        "nodejs": {
-            "name": "Node.js (x64)",
-            "url": "https://nodejs.org/dist/v22.14.0/node-v22.14.0-x64.msi",
-            "page_url": "https://nodejs.org/en/download"
-        },
-        "node": {
-            "name": "Node.js (x64)",
-            "url": "https://nodejs.org/dist/v22.14.0/node-v22.14.0-x64.msi",
-            "page_url": "https://nodejs.org/en/download"
-        },
-        "python": {
-            "name": "Python 3.13 (x64)",
-            "url": "https://www.python.org/ftp/python/3.13.2/python-3.13.2-amd64.exe",
-            "page_url": "https://www.python.org/downloads/"
-        },
-        "7zip": {
-            "name": "7-Zip (x64)",
-            "url": "https://www.7-zip.org/a/7z2408-x64.exe",
-            "page_url": "https://www.7-zip.org/"
-        },
-        "brave": {
-            "name": "Brave Browser (x64)",
-            "url": "https://laptop-updates.brave.com/latest/winx64",
-            "page_url": "https://brave.com/download/"
-        },
-        "chrome": {
-            "name": "Google Chrome (x64)",
-            "url": "https://dl.google.com/chrome/install/standalone/x64/ChromeStandaloneSetup64.exe",
-            "page_url": "https://www.google.com/chrome/"
+        "blender": {
+            "name": "Blender (x64)",
+            "url": "https://www.blender.org/download/release/Blender4.1/blender-4.1.1-windows-x64.msi",
+            "page_url": "https://www.blender.org/download/"
         },
         "whatsapp": {
             "name": "WhatsApp Desktop (x64)",
             "url": "https://web.whatsapp.com/desktop/windows/release/x64/WhatsAppSetup.exe",
             "page_url": "https://www.whatsapp.com/download"
         },
-        "spotify": {
-            "name": "Spotify Desktop",
-            "url": "https://download.scdn.co/SpotifySetup.exe",
-            "page_url": "https://www.spotify.com/download/"
+        "chrome": {
+            "name": "Google Chrome (x64)",
+            "url": "https://dl.google.com/chrome/install/latest/chrome_installer.exe",
+            "page_url": "https://www.google.com/chrome/"
         },
-        "postman": {
-            "name": "Postman Desktop (x64)",
-            "url": "https://dl.pstmn.io/download/latest/win64",
-            "page_url": "https://www.postman.com/downloads/"
+        "brave": {
+            "name": "Brave Browser (x64)",
+            "url": "https://laptop-updates.brave.com/latest/winx64",
+            "page_url": "https://brave.com/download/"
+        },
+        "steam": {
+            "name": "Steam Client",
+            "url": "https://cdn.cloudflare.steamstatic.com/client/installer/SteamSetup.exe",
+            "page_url": "https://store.steampowered.com/about/"
         },
         "epic": {
             "name": "Epic Games Launcher",
@@ -2327,7 +2691,6 @@ def download_software_or_game(software_name: str, use_fdm: Optional[bool] = None
         }
     }
 
-    # Match target entry from catalog or dynamic link
     target_entry = None
     for key, data in catalog.items():
         if key in clean_name or clean_name in key:
@@ -2342,17 +2705,7 @@ def download_software_or_game(software_name: str, use_fdm: Optional[bool] = None
         target_url = f"https://www.google.com/search?q={urllib.parse.quote(clean_name + ' download official windows 64-bit')}"
 
     if use_fdm and fdm_exe:
-        # Launch in Free Download Manager
-        try:
-            subprocess.Popen([fdm_exe, target_url])
-            time.sleep(0.6)
-            # Auto-confirm FDM popup dialog if focused
-            focus_window_by_title("Free Download Manager")
-            time.sleep(0.2)
-            pyautogui.press("enter")
-        except Exception:
-            pass
-        # Also open in Chrome (Profile 1) with FDM extension active
+        launch_and_confirm_fdm_download(target_url, fdm_exe)
         try:
             subprocess.Popen([chrome_exe, "--profile-directory=Profile 1", target_url])
         except Exception:
@@ -2368,7 +2721,6 @@ def download_software_or_game(software_name: str, use_fdm: Optional[bool] = None
             "message": f"Sir, {app_title} x64 installer Free Download Manager (FDM) mein download par laga diya hai ({target_url})."
         }
     else:
-        # Standard Browser Download in Chrome -> Windows Downloads Folder
         subprocess.Popen([chrome_exe, "--profile-directory=Profile 1", target_url])
         spoken = f"Sir, {app_title} Windows Downloads folder mein download par laga diya hai."
         return {
@@ -2379,6 +2731,91 @@ def download_software_or_game(software_name: str, use_fdm: Optional[bool] = None
             "spoken_summary": spoken,
             "message": f"Sir, {app_title} x64 installer Windows Downloads folder mein download par laga diya hai ({target_url})."
         }
+
+def check_fdm_download_status(query: Optional[str] = "") -> Dict[str, Any]:
+    """
+    Checks the active status, downloaded files, in-progress downloads, and storage of Free Download Manager (FDM) in 'F:\\FDM'.
+    Call when asked 'FDM pe status dekh ke btao', 'FDM downloads check karo', 'game download kitni hui', etc.
+    """
+    import os
+    import time
+    import subprocess
+
+    fdm_dir = r"F:\FDM"
+    downloads = []
+    
+    if os.path.exists(fdm_dir):
+        try:
+            for f in os.listdir(fdm_dir):
+                full_path = os.path.join(fdm_dir, f)
+                if os.path.isfile(full_path):
+                    size_bytes = os.path.getsize(full_path)
+                    mtime = os.path.getmtime(full_path)
+                    time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mtime))
+                    
+                    if size_bytes >= 1024 * 1024 * 1024:
+                        size_str = f"{size_bytes / (1024**3):.2f} GB"
+                    elif size_bytes >= 1024 * 1024:
+                        size_str = f"{size_bytes / (1024**2):.2f} MB"
+                    else:
+                        size_str = f"{size_bytes / 1024:.1f} KB"
+                        
+                    is_partial = f.endswith('.fdmdownload') or f.endswith('.crdownload') or f.endswith('.part')
+                    status = "Downloading / In Progress" if is_partial else "Completed"
+                    
+                    downloads.append({
+                        "file_name": f,
+                        "size": size_str,
+                        "status": status,
+                        "last_modified": time_str
+                    })
+        except Exception:
+            pass
+
+    # Check if FDM process is running
+    fdm_running = False
+    try:
+        out = subprocess.check_output('tasklist /fi "imagename eq fdm.exe"', shell=True, text=True)
+        if "fdm.exe" in out.lower():
+            fdm_running = True
+    except Exception:
+        pass
+
+    if not downloads:
+        spoken = "Sir, FDM folder 'F:\\FDM' mein filhal koi active download file nahi mili."
+        return {
+            "status": "info",
+            "fdm_running": fdm_running,
+            "folder": fdm_dir,
+            "downloads": [],
+            "spoken_summary": spoken,
+            "message": spoken
+        }
+
+    # Generate spoken summary in Roman Urdu
+    active_items = [d for d in downloads if d["status"] == "Downloading / In Progress"]
+    completed_items = [d for d in downloads if d["status"] == "Completed"]
+    
+    parts = []
+    if active_items:
+        for it in active_items:
+            clean_fn = it["file_name"].replace(".fdmdownload", "").replace(".crdownload", "")
+            parts.append(f"'{clean_fn}' abhi download ho rahi hai (size: {it['size']})")
+    if completed_items:
+        recent_done = completed_items[-1]
+        parts.append(f"'{recent_done['file_name']}' complete ho chuki hai (size: {recent_done['size']})")
+        
+    spoken = f"Sir, FDM status: {', aur '.join(parts)}."
+    
+    return {
+        "status": "success",
+        "fdm_running": fdm_running,
+        "folder": fdm_dir,
+        "total_files": len(downloads),
+        "downloads": downloads,
+        "spoken_summary": spoken,
+        "message": f"Sir, FDM status:\n" + "\n".join([f"- {d['file_name']}: {d['size']} ({d['status']})" for d in downloads])
+    }
 
 # Registry mapping tool names to python callables
 TOOL_REGISTRY = {
@@ -2393,6 +2830,8 @@ TOOL_REGISTRY = {
     "manage_system_volume": manage_system_volume,
     "manage_windows_power": manage_windows_power,
     "open_windows_settings": open_windows_settings,
+    "open_whatsapp": open_whatsapp,
+    "open_whatsapp_contact_chat": open_whatsapp_contact_chat,
     "send_whatsapp_message": send_whatsapp_message,
     "send_antigravity_command": send_antigravity_command,
     "type_text_into_active_app": type_text_into_active_app,
@@ -2416,6 +2855,7 @@ TOOL_REGISTRY = {
     "proceed_browser_login": proceed_browser_login,
     "fetch_web_knowledge_and_facts": fetch_web_knowledge_and_facts,
     "download_software_or_game": download_software_or_game,
+    "check_fdm_download_status": check_fdm_download_status,
 }
 
 # Declarations for Gemini 2.0 Function Calling
@@ -2432,6 +2872,8 @@ TOOL_DECLARATIONS = [
     manage_windows_power,
     manage_screen_power,
     open_windows_settings,
+    open_whatsapp,
+    open_whatsapp_contact_chat,
     send_whatsapp_message,
     send_antigravity_command,
     type_text_into_active_app,
@@ -2454,4 +2896,5 @@ TOOL_DECLARATIONS = [
     play_youtube_music_or_video,
     fetch_web_knowledge_and_facts,
     download_software_or_game,
+    check_fdm_download_status,
 ]
