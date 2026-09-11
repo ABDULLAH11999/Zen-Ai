@@ -856,26 +856,108 @@ def manage_bluetooth(action: str = "toggle", device_name: Optional[str] = None) 
 
 def close_all_user_applications() -> Dict[str, Any]:
     """
-    Closes all active user taskbar applications (browsers, media players, editors, office apps) safely without terminating background system/agent services.
+    Closes all active user taskbar applications, windows, browsers, games, and tools safely without terminating background system/agent services or IDE servers.
     """
     import subprocess
-    target_apps = [
-        "chrome.exe", "msedge.exe", "brave.exe", "firefox.exe",
-        "notepad.exe", "calc.exe", "CalculatorApp.exe", "whatsapp.exe",
-        "spotify.exe", "discord.exe", "vlc.exe", "telegram.exe",
-        "excel.exe", "winword.exe", "powerpnt.exe"
+    import psutil
+    import os
+    
+    current_pid = os.getpid()
+    parent_pids = set()
+    try:
+        p = psutil.Process(current_pid)
+        for parent in p.parents():
+            parent_pids.add(parent.pid)
+    except Exception:
+        pass
+
+    # Protected System & Agent Core Processes (NEVER TERMINATE)
+    protected_names = {
+        "system", "smss.exe", "csrss.exe", "wininit.exe", "services.exe", "lsass.exe",
+        "svchost.exe", "fontdrvhost.exe", "dwm.exe", "winlogon.exe", "taskhostw.exe",
+        "sihost.exe", "explorer.exe", "shellexperiencehost.exe", "startmenuexperiencehost.exe",
+        "searchhost.exe", "searchapp.exe", "ctfmon.exe", "systemsettings.exe",
+        "securityhealthsystray.exe", "securityhealthservice.exe", "audiodg.exe", "spoolsv.exe",
+        "runtimebroker.exe", "applicationframehost.exe", "python.exe", "pythonw.exe",
+        "cmd.exe", "conhost.exe", "powershell.exe", "pwsh.exe", "code.exe",
+        "antigravity.exe", "laragon.exe", "mysqld.exe", "httpd.exe", "nginx.exe", "redis-server.exe",
+        "tailscale.exe", "tailscaled.exe", "tailscale-ipn.exe", "powertoys.exe", "powertoys.awake.exe",
+        "powertoys.fancyzones.exe", "powertoys.alwaysontop.exe", "powertoys.quickaccess.exe", "powertoys.peek.ui.exe",
+        "language_server_windows_x64.exe", "gemini.exe", "node.exe", "git.exe"
+    }
+
+    # Common User App Executables
+    common_user_targets = [
+        # Browsers
+        "chrome.exe", "msedge.exe", "brave.exe", "firefox.exe", "opera.exe", "vivaldi.exe", "arc.exe", "tor.exe",
+        # Downloaders & Torrents
+        "fdm.exe", "freedownloadmanager.exe", "bittorrent.exe", "bittorrentie.exe", "utorrent.exe", "qbittorrent.exe", "idman.exe",
+        # Developer & Modding Tools
+        "githubdesktop.exe", "openiv.exe", "postman.exe", "insomnia.exe", "dbeaver.exe",
+        # Communication & Social
+        "whatsapp.exe", "telegram.exe", "discord.exe", "slack.exe", "zoom.exe", "skype.exe", "teams.exe", "msteams.exe",
+        # Media & Entertainment
+        "spotify.exe", "vlc.exe", "mpc-hc.exe", "mpc-hc64.exe", "wmplayer.exe", "music.ui.exe", "video.ui.exe",
+        # Productivity & Office
+        "notepad.exe", "notepad++.exe", "calc.exe", "calculatorapp.exe", "winword.exe", "excel.exe", "powerpnt.exe", "onenote.exe", "mspaint.exe",
+        # Games & Launchers
+        "tradingview.exe", "steam.exe", "steamwebhelper.exe", "epicgameslauncher.exe", "gta5.exe", "playgta5.exe",
+        "detroitbecomehuman.exe", "cyberpunk2077.exe", "forzahorizon4.exe", "forzahorizon5.exe", "r5apex.exe", "fifa.exe",
+        # Streaming & Remote
+        "obs64.exe", "obs32.exe", "blender.exe", "pcremotereceiverui.exe", "pcremotereceiver.exe", "anydesk.exe", "teamviewer.exe"
     ]
-    closed = []
-    for app in target_apps:
+
+    closed_apps = set()
+
+    # 1. Close all open File Explorer folder windows cleanly via COM
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", "$shell = New-Object -ComObject Shell.Application; $shell.Windows() | ForEach-Object { try { $_.Quit() } catch {} }"],
+            capture_output=True,
+            timeout=2.0
+        )
+        closed_apps.add("File Explorer")
+    except Exception:
+        pass
+
+    # 2. Terminate all known user applications
+    for app in common_user_targets:
         try:
             res = subprocess.run(["taskkill", "/F", "/IM", app, "/T"], capture_output=True, text=True)
             if res.returncode == 0:
-                closed.append(app.replace(".exe", ""))
+                closed_apps.add(app.replace(".exe", "").title())
         except Exception:
             pass
-            
-    msg = "Sir, sabhi active user windows apps band kar diye gaye hain."
-    return {"status": "success", "closed_apps": closed, "message": msg}
+
+    # 3. Terminate any remaining non-protected interactive user apps
+    for proc in psutil.process_iter(['pid', 'name', 'exe']):
+        try:
+            pid = proc.info['pid']
+            pname = (proc.info['name'] or "").lower()
+            if pid == current_pid or pid in parent_pids or pid <= 4:
+                continue
+            if pname in protected_names or any(prot in pname for prot in ["laragon", "antigravity", "python", "code", "gemini", "language_server"]):
+                continue
+            exe = (proc.info['exe'] or "").lower()
+            if not exe or "c:\\windows\\system32" in exe or "c:\\windows\\winsxs" in exe:
+                continue
+            if any(k in exe for k in [".gemini", ".vscode", "laragon", "antigravity"]):
+                continue
+            # Check if running in user app locations (Games, AppData, Downloads, etc.)
+            if any(k in exe for k in ["appdata", "games", "steamlibrary", "downloads", "f:\\"]):
+                proc.kill()
+                closed_apps.add(pname.replace(".exe", "").title())
+        except Exception:
+            pass
+
+    closed_list = sorted(list(closed_apps))
+    if closed_list:
+        apps_str = ", ".join(closed_list[:6])
+        msg = f"Sir, sabhi active user windows aur applications ({apps_str}) band kar diye gaye hain."
+    else:
+        msg = "Sir, sabhi active user windows apps band kar diye gaye hain."
+
+    return {"status": "success", "closed_apps": closed_list, "message": msg}
 
 def manage_system_volume(action: str = "status", level_percent: Optional[int] = None) -> Dict[str, Any]:
     """
