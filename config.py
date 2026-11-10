@@ -34,7 +34,7 @@ class Config:
     
     # Groq API Settings (Ultra-fast failover engine & whisper-large-v3-turbo)
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
-    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b")
+    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
     
     # Faster Whisper STT Settings (High speed offline CPU/INT8)
     WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "base.en")
@@ -59,13 +59,13 @@ class Config:
     # Language & Persona Settings (urdu as #1 top priority, hindi/english fallback)
     JARVIS_LANGUAGE: str = os.getenv("JARVIS_LANGUAGE", "urdu").lower()
     
-    # Edge TTS Settings (Hindi voice hi-IN-MadhurNeural for crystal-clear speaker pronunciation)
-    TTS_VOICE_URDU: str = os.getenv("TTS_VOICE_URDU", "ur-PK-AsadNeural")
+    # Edge TTS Settings (Natural male voice with Professor depth and fast smooth flow)
     TTS_VOICE_HINDI: str = os.getenv("TTS_VOICE_HINDI", "hi-IN-MadhurNeural")
+    TTS_VOICE_URDU: str = os.getenv("TTS_VOICE_URDU", "ur-PK-AsadNeural")
     TTS_VOICE_ENGLISH: str = os.getenv("TTS_VOICE_ENGLISH", "en-GB-RyanNeural")
     TTS_VOICE: str = os.getenv("TTS_VOICE", TTS_VOICE_HINDI)
-    TTS_RATE: str = os.getenv("TTS_RATE", "+5%")
-    TTS_PITCH: str = os.getenv("TTS_PITCH", "-2Hz")
+    TTS_RATE: str = os.getenv("TTS_RATE", "+12%")
+    TTS_PITCH: str = os.getenv("TTS_PITCH", "-3Hz")
     
     # Screen Vision Settings (Fast 1280px JPEG stream)
     SCREENSHOT_MAX_WIDTH: int = int(os.getenv("SCREENSHOT_MAX_WIDTH", "1280"))
@@ -79,6 +79,11 @@ class Config:
     # Owner & Master Configuration
     OWNER_NAME: str = os.getenv("OWNER_NAME", "Abdullah Irfan")
     WINDOWS_PIN: str = os.getenv("WINDOWS_PIN", "")
+    
+    # Scalper Bot Dashboard Configuration
+    SCALPER_BOT_URL: str = os.getenv("SCALPER_BOT_URL", "https://boring-colden.84-247-185-16.plesk.page")
+    SCALPER_BOT_EMAIL: str = os.getenv("SCALPER_BOT_EMAIL", "abdullah2843@gmail.com")
+    SCALPER_BOT_PASSWORD: str = os.getenv("SCALPER_BOT_PASSWORD", "@7940")
     
     # System Instruction for ZEN
     SYSTEM_INSTRUCTION: str = (
@@ -95,7 +100,7 @@ class Config:
         "- ALWAYS speak and respond in natural, polite, fluent spoken Urdu / Roman Urdu (e.g. 'Jee Sir', 'Summary yeh hai', 'Chal raha hai', 'Kardiya hai') as your highest priority.\n"
         "- Do NOT use pure Hindi / Devanagari words like 'सारांश', 'थी', 'था' unless asked. Speak in authentic Pakistani Urdu.\n"
         "- Do NOT speak in English unless the user explicitly speaks entirely in English.\n"
-        "- Tone: Calm, sophisticated, polite, and confident (Tony Stark AI style).\n"
+        "- Tone: Calm, deep, intellectual, composed, strategic, and polite (like 'The Professor' from Money Heist / Álvaro Morte style — deeply focused, articulate, reassuring, and calculated).\n"
         "- Always address the user as 'Sir' or 'Sir Abdullah'.\n\n"
         "CRITICAL RULES & KNOWLEDGE DELIVERY:\n"
         "1. KNOWLEDGE & INFORMATION REQUESTS: When Sir Abdullah Irfan asks about ANY person, entity, name (e.g. Irfan Malik), place, thing, company (e.g. Xeven Solutions, Einnovention), news, or technical topic, provide a PROPER, informative, well-structured, and complete explanation in natural Roman Urdu. Use `fetch_web_knowledge_and_facts` to pull live accurate facts, and deliver who they are, where they are based, their key projects, and their current work.\n"

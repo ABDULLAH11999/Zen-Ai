@@ -363,7 +363,7 @@ class JarvisAgent:
                     "type": "function",
                     "function": {
                         "name": "check_scalper_bot_status",
-                        "description": "Checks live web trading dashboard (https://scalper-bot.84-247-185-16.plesk.page/) and returns Market Sentiment Score, Regime, Total Balance, and Active Trades when asked 'trading bot kesa chal raha he' or 'bot status'.",
+                        "description": "Checks live web trading dashboard (https://boring-colden.84-247-185-16.plesk.page/) and returns Market Sentiment Score, Regime, Total Balance, and Active Trades when asked 'trading bot kesa chal raha he' or 'bot status'.",
                         "parameters": {
                             "type": "object",
                             "properties": {}
@@ -691,6 +691,10 @@ class JarvisAgent:
             target_m = m.group(1) if m else "3.8"
             res = TOOL_REGISTRY["set_ai_model"](model_name=target_m)
             return res.get("message", f"Sir, model {target_m} par set kardiya hai.")
+
+        if any(w in lower_prompt for w in ["backtest", "back test", "backtests", "backtesting"]) and any(act in lower_prompt for act in ["report", "summary", "verdict", "batao", "fetch", "check", "dekho", "kya", "latest", "latets", "status"]):
+            res = TOOL_REGISTRY["get_latest_backtest_report_summary"]()
+            return res.get("spoken_summary", res.get("message", "Sir, backtest summary retrieve karli hai."))
         
         # 1. Fast Path for instantaneous sub-second execution (non-vision queries & actions)
         if not needs_vision and config.GROQ_API_KEY:

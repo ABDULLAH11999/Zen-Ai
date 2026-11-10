@@ -328,26 +328,64 @@ class AudioEngine:
     # ==========================================
     
     async def _generate_speech_bytes(self, text: str) -> bytes:
-        """Asynchronously streams speech audio from edge-tts into memory bytes."""
-        # Auto-detect if text has Hindi / Devanagari characters or use configured voice
-        voice = config.TTS_VOICE
-        has_devanagari = any('\u0900' <= char <= '\u097F' for char in text)
-        if has_devanagari or config.JARVIS_LANGUAGE in ["hindi", "urdu", "bilingual"]:
-            voice = config.TTS_VOICE_HINDI
-        elif config.JARVIS_LANGUAGE == "english":
-            voice = config.TTS_VOICE_ENGLISH
+        """Asynchronously streams speech audio from edge-tts into memory bytes with gTTS fallback."""
+        import re
+        # 1. Clean Markdown & Code markers
+        clean_t = re.sub(r'[*_#`~]', '', text).strip()
+        
+        # 2. Phonetic Normalization for Roman Urdu:
+        clean_t = re.sub(r'\b(hai|he)\b', 'heh', clean_t, flags=re.IGNORECASE)
+        clean_t = re.sub(r'\bhain\b', 'hein', clean_t, flags=re.IGNORECASE)
+        clean_t = re.sub(r'\bmain\b', 'mein', clean_t, flags=re.IGNORECASE)
+        clean_t = re.sub(r'\bkia\b', 'kya', clean_t, flags=re.IGNORECASE)
+        clean_t = re.sub(r'\bboht\b', 'bohot', clean_t, flags=re.IGNORECASE)
+        clean_t = re.sub(r'\s+', ' ', clean_t).strip()
+        
+        if not clean_t:
+            return b""
             
-        communicate = edge_tts.Communicate(
-            text=text,
-            voice=voice,
-            rate=config.TTS_RATE,
-            pitch=config.TTS_PITCH
-        )
-        audio_stream = io.BytesIO()
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_stream.write(chunk["data"])
-        return audio_stream.getvalue()
+        voices_to_try = [
+            getattr(config, "TTS_VOICE_HINDI", "hi-IN-MadhurNeural"),
+            getattr(config, "TTS_VOICE_URDU", "ur-PK-AsadNeural"),
+            "ur-IN-SalmanNeural",
+            getattr(config, "TTS_VOICE_ENGLISH", "en-GB-RyanNeural")
+        ]
+        
+        pitch = getattr(config, "TTS_PITCH", "-3Hz")
+        rate = getattr(config, "TTS_RATE", "+12%")
+
+        for voice in voices_to_try:
+            try:
+                communicate = edge_tts.Communicate(
+                    text=clean_t,
+                    voice=voice,
+                    rate=rate,
+                    pitch=pitch
+                )
+                audio_stream = io.BytesIO()
+                async def _stream():
+                    async for chunk in communicate.stream():
+                        if chunk["type"] == "audio":
+                            audio_stream.write(chunk["data"])
+                await asyncio.wait_for(_stream(), timeout=14.0)
+                b = audio_stream.getvalue()
+                if b and len(b) > 200:
+                    return b
+            except Exception as e:
+                logger.debug(f"Edge-TTS voice {voice} notice: {e}")
+                continue
+                
+        # Fallback to gTTS
+        try:
+            from gtts import gTTS
+            lang = "hi" if config.JARVIS_LANGUAGE in ["urdu", "hindi", "bilingual"] else "en"
+            stream = io.BytesIO()
+            tts = gTTS(text=clean_t, lang=lang)
+            tts.write_to_fp(stream)
+            return stream.getvalue()
+        except Exception as ge:
+            logger.error(f"TTS error in fallback: {ge}")
+            return b""
 
     def speak(self, text: str, on_start: Optional[Callable] = None, on_finish: Optional[Callable] = None) -> None:
         """

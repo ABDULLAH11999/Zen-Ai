@@ -1,10 +1,10 @@
-﻿@echo off
+@echo off
 title Z.E.N. Autonomous System & Mobile Cloud Portal
 color 0b
 cls
 
 :: Switch to Zen Ai directory
-cd /d "F:\Zen Agent\Zen Ai"
+cd /d "%~dp0"
 
 echo ======================================================================
 echo          Z.E.N. (Zero-latency Executive Neural-network) 2.0           
@@ -20,7 +20,7 @@ for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":5050" ^| findstr "LISTENING
 )
 
 echo [1/2] Starting Mobile Web Audio Portal (Port 5050 + Tailscale SSL)...
-start "ZEN Mobile Web Portal (Port 5050)" cmd /k "cd /d "F:\Zen Agent\Zen Ai" && color 0a && title ZEN Mobile Web Portal (Port 5050) && set PYTHONIOENCODING=utf-8 && "C:\laragon\bin\python\python-3.13\python.exe" zen_web_portal.py"
+start "ZEN Mobile Web Portal (Port 5050)" cmd /k "cd /d "%~dp0" && color 0a && title ZEN Mobile Web Portal (Port 5050) && set PYTHONIOENCODING=utf-8 && "C:\laragon\bin\python\python-3.13\python.exe" zen_web_portal.py"
 
 timeout /t 2 /nobreak >nul
 

@@ -43,39 +43,83 @@ app.add_middleware(
 agent = JarvisAgent()
 
 async def generate_tts_base64(text: str) -> Optional[str]:
-    """Synthesizes text to speech with Edge-TTS and returns base64 MP3."""
+    """Synthesizes text to speech with Edge-TTS (with timeout) and returns base64 MP3.
+    Natural Male voice with smooth Roman Urdu pronunciation and fast flow.
+    """
     if not text:
         return None
+        
+    import re
+    # 1. Clean Markdown & Code artifacts
+    cleaned = re.sub(r'[*_#`~]', '', text).strip()
+    
+    # 2. Phonetic Normalization for Roman Urdu:
+    # Fixes 'hai' / 'he' -> 'hh' so TTS pronounces crisp short 'hh' instead of dragging 'haa-eey'
+    cleaned = re.sub(r'\b(hai|he)\b', 'heh', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\bhain\b', 'hein', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\bmain\b', 'mein', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\bkia\b', 'kya', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\bboht\b', 'bohot', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    
+    if not cleaned:
+        return None
+
+    # Preferred male voices: Madhur (natural fluent Hinglish/Urdu flow) followed by Asad
+    male_voices = [
+        getattr(config, "TTS_VOICE_HINDI", "hi-IN-MadhurNeural"),
+        getattr(config, "TTS_VOICE_URDU", "ur-PK-AsadNeural"),
+        "ur-IN-SalmanNeural"
+    ]
+    pitch = getattr(config, "TTS_PITCH", "-3Hz")
+    rate = getattr(config, "TTS_RATE", "+12%")
+
     try:
         import edge_tts
-        voices_to_try = [
-            getattr(config, "TTS_VOICE_HINDI", "hi-IN-MadhurNeural"),
-            "hi-IN-SwaraNeural",
-            getattr(config, "TTS_VOICE_URDU", "ur-PK-AsadNeural"),
-            "en-GB-RyanNeural"
-        ]
-        
-        for voice in voices_to_try:
+        for voice in male_voices:
             try:
                 communicate = edge_tts.Communicate(
-                    text=text,
+                    text=cleaned,
                     voice=voice,
-                    rate=config.TTS_RATE,
-                    pitch=config.TTS_PITCH
+                    rate=rate,
+                    pitch=pitch
                 )
                 audio_stream = io.BytesIO()
-                async for chunk in communicate.stream():
-                    if chunk["type"] == "audio":
-                        audio_stream.write(chunk["data"])
                 
+                async def _stream():
+                    async for chunk in communicate.stream():
+                        if chunk["type"] == "audio":
+                            audio_stream.write(chunk["data"])
+                            
+                # Allow 14s timeout for full network stream completion
+                await asyncio.wait_for(_stream(), timeout=14.0)
                 audio_bytes = audio_stream.getvalue()
                 if audio_bytes and len(audio_bytes) > 200:
+                    logger.info(f"Edge-TTS Natural Male voice [{voice}] generated {len(audio_bytes)} bytes")
                     return base64.b64encode(audio_bytes).decode("utf-8")
             except Exception as v_err:
-                logger.warning(f"Voice {voice} failed ({v_err}), trying next fallback...")
+                logger.debug(f"Male voice [{voice}] notice ({v_err}), trying next fallback...")
                 continue
     except Exception as e:
-        logger.error(f"Error generating TTS audio: {e}")
+        logger.warning(f"Edge-TTS male voice engine notice: {e}")
+
+    # 2. Emergency Fallback: Google TTS (Only if all male Edge voices are unreachable)
+    try:
+        from gtts import gTTS
+        gtts_lang = "hi" if config.JARVIS_LANGUAGE in ["urdu", "hindi", "bilingual"] else "en"
+        def _run_gtts():
+            stream = io.BytesIO()
+            tts = gTTS(text=cleaned, lang=gtts_lang)
+            tts.write_to_fp(stream)
+            return stream.getvalue()
+            
+        gtts_bytes = await asyncio.to_thread(_run_gtts)
+        if gtts_bytes and len(gtts_bytes) > 200:
+            logger.info(f"Emergency gTTS generated {len(gtts_bytes)} bytes")
+            return base64.b64encode(gtts_bytes).decode("utf-8")
+    except Exception as ge:
+        logger.error(f"Error in emergency fallback: {ge}")
+
     return None
 
 @app.get("/api/status")
@@ -652,8 +696,9 @@ async def mobile_portal_ui():
         </div>
         <div class="speech-bubble zen-bubble" id="zen-reply">
             <div id="zen-reply-text">Sir, ZEN mobile link tayyar hai. Hukum kijiye?</div>
-            <div style="margin-top: 8px; display: flex; justify-content: flex-end;">
-                <button id="replay-btn" onclick="replayLastAudio()" style="background: rgba(0,240,255,0.15); border: 1px solid rgba(0,240,255,0.4); color: #00f0ff; padding: 4px 10px; border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer;">🔊 Replay Voice</button>
+            <div style="margin-top: 8px; display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-size: 10px; color: var(--text-dim);">🔇 Silent Switch OFF rakhein</span>
+                <button id="replay-btn" onclick="replayLastAudio()" style="background: rgba(0,240,255,0.15); border: 1px solid rgba(0,240,255,0.4); color: #00f0ff; padding: 5px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer;">🔊 Awaz Suniye</button>
             </div>
         </div>
     </div>
@@ -733,7 +778,11 @@ async def mobile_portal_ui():
     const ttsAudio = document.getElementById('tts-audio');
     const audioIndicator = document.getElementById('audio-indicator');
 
+    // 1-frame silent WAV audio data to prime mobile browsers
+    const SILENT_AUDIO = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+    let isAudioPrimed = false;
     let audioCtx = null;
+
     function unlockIOSAudio() {
         try {
             if (!audioCtx) {
@@ -742,18 +791,29 @@ async def mobile_portal_ui():
             if (audioCtx.state === 'suspended') {
                 audioCtx.resume();
             }
-            // Prime HTML5 Audio element on user tap
-            ttsAudio.play().then(() => { ttsAudio.pause(); }).catch(() => {});
+            if (!isAudioPrimed && ttsAudio) {
+                ttsAudio.src = SILENT_AUDIO;
+                const p = ttsAudio.play();
+                if (p !== undefined) {
+                    p.then(() => {
+                        ttsAudio.pause();
+                        isAudioPrimed = true;
+                    }).catch(() => {});
+                }
+            }
         } catch (e) {}
     }
 
-    // Automatically unlock audio on first touch anywhere on iPhone screen
+    // Automatically unlock audio on first touch anywhere on mobile screen
     document.addEventListener('touchstart', unlockIOSAudio, { passive: true });
     document.addEventListener('click', unlockIOSAudio, { passive: true });
 
     // Play synthesized speech audio from Base64 via Blob URL
     function playTTSAudio(base64Audio) {
-        if (!base64Audio) return;
+        if (!base64Audio) {
+            console.warn("No base64 audio provided to playTTSAudio");
+            return;
+        }
         lastAudioBase64 = base64Audio;
         
         try {
@@ -785,17 +845,27 @@ async def mobile_portal_ui():
                     };
                 }).catch(async (err) => {
                     console.warn("HTML5 audio play blocked, falling back to Web Audio API:", err);
-                    audioIndicator.textContent = "🔊 Tap Replay to Hear";
+                    audioIndicator.textContent = "🔊 Tap Here to Hear";
                     audioIndicator.style.color = "#ffaa00";
-                    // Fallback Web Audio
+                    // Fallback Web Audio API
                     try {
                         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                         if (audioCtx.state === 'suspended') await audioCtx.resume();
-                        const decodedBuffer = await audioCtx.decodeAudioData(bytes.buffer.slice(0));
-                        const src = audioCtx.createBufferSource();
-                        src.buffer = decodedBuffer;
-                        src.connect(audioCtx.destination);
-                        src.start(0);
+                        const bufferCopy = bytes.buffer.slice(0);
+                        audioCtx.decodeAudioData(bufferCopy, (decodedBuffer) => {
+                            const src = audioCtx.createBufferSource();
+                            src.buffer = decodedBuffer;
+                            src.connect(audioCtx.destination);
+                            src.start(0);
+                            audioIndicator.textContent = "🔊 Playing Audio...";
+                            audioIndicator.style.color = "#00f0ff";
+                            src.onended = () => {
+                                audioIndicator.textContent = "🔊 Speaker Active";
+                                audioIndicator.style.color = "var(--success)";
+                            };
+                        }, (e) => {
+                            console.error("decodeAudioData error:", e);
+                        });
                     } catch (e2) {
                         console.error("Web Audio fallback error:", e2);
                     }
@@ -845,6 +915,7 @@ async def mobile_portal_ui():
 
     // Start / Stop Microphone Recording
     micBtn.addEventListener('click', async () => {
+        unlockIOSAudio();
         if (!isRecording) {
             startRecording();
         } else {
@@ -1028,7 +1099,7 @@ async def mobile_portal_ui():
 """
     return HTMLResponse(content=html_content)
 
-def start_cloudflare_tunnel(port: int = 5050):
+def start_cloudflare_tunnel(port: int = 5050, is_https: bool = False):
     """Spawns Cloudflare Tunnel to provide free public trusted HTTPS URL for iPhone Safari."""
     cloudflared_path = os.path.join(os.path.dirname(__file__), "temp", "cloudflared.exe")
     if not os.path.exists(cloudflared_path):
@@ -1042,7 +1113,10 @@ def start_cloudflare_tunnel(port: int = 5050):
     import threading
     import re
     
-    tunnel_cmd = [cloudflared_path, "tunnel", "--url", f"http://127.0.0.1:{port}"]
+    if is_https:
+        tunnel_cmd = [cloudflared_path, "tunnel", "--url", f"https://127.0.0.1:{port}", "--no-tls-verify"]
+    else:
+        tunnel_cmd = [cloudflared_path, "tunnel", "--url", f"http://127.0.0.1:{port}"]
     
     def run_tunnel():
         try:
@@ -1094,7 +1168,6 @@ def free_port(target_port: int = 5050):
 if __name__ == "__main__":
     port = 5050
     free_port(port)
-    start_cloudflare_tunnel(port)
     
     cert_path = os.path.join(os.path.dirname(__file__), "certs", "cert.pem")
     key_path = os.path.join(os.path.dirname(__file__), "certs", "key.pem")
@@ -1111,6 +1184,8 @@ if __name__ == "__main__":
         scheme = "https"
     else:
         scheme = "http"
+
+    start_cloudflare_tunnel(port, is_https=(scheme == "https"))
 
     print(f"\n=======================================================")
     print(f"[Z.E.N.] MOBILE WEB AUDIO PORTAL ACTIVE (SSL SECURE)!")

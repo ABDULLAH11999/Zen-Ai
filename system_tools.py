@@ -1213,15 +1213,19 @@ def check_git_repo_status(repo_path: Optional[str] = None) -> Dict[str, Any]:
 
 def get_latest_backtest_report_summary(bot_dir: str = "F:\\binance_mexc_bot") -> Dict[str, Any]:
     r"""
-    Reads the latest backtest report summary from F:\binance_mexc_bot\backtesting\reports\ and returns key metrics in Urdu.
+    Reads the absolute latest backtest report summary from either scratch or reports directories
+    (including A Time Machine Backtest\reports) and returns full quantitative metrics and verdicts in Urdu.
     """
     import json
     import glob
     try:
         search_dirs = [
+            os.path.join(bot_dir, "scratch"),
+            os.path.join(bot_dir, "A Time Machine Backtest", "reports"),
+            os.path.join(bot_dir, "A Time Machine Backtest", "Insane", "reports"),
+            os.path.join(bot_dir, "A Time Machine Backtest", "Aggressive", "reports"),
             os.path.join(bot_dir, "backtesting", "reports"),
             os.path.join(bot_dir, "reports"),
-            os.path.join(bot_dir, "scratch"),
             bot_dir
         ]
         
@@ -1241,7 +1245,7 @@ def get_latest_backtest_report_summary(bot_dir: str = "F:\\binance_mexc_bot") ->
                 "message": "Sir, koi backtest report nahi mili."
             }
             
-        # Sort by latest modification time
+        # Sort by latest modification time (absolute latest file first)
         candidate_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
         
         data = None
@@ -1250,8 +1254,11 @@ def get_latest_backtest_report_summary(bot_dir: str = "F:\\binance_mexc_bot") ->
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
                     content = json.load(f)
-                    # Check if it has backtest metrics
-                    if isinstance(content, dict) and any(k in content for k in ["start_balance", "initial_capital", "starting_balance", "net_pnl", "runs", "total_trades"]):
+                    if isinstance(content, list) and len(content) > 0 and isinstance(content[0], dict):
+                        data = content[0]
+                        chosen_file = file_path
+                        break
+                    elif isinstance(content, dict) and any(k in content for k in ["start_balance", "initial_capital", "initial_balance", "starting_balance", "net_pnl", "runs", "total_trades"]):
                         data = content
                         chosen_file = file_path
                         break
@@ -1268,45 +1275,78 @@ def get_latest_backtest_report_summary(bot_dir: str = "F:\\binance_mexc_bot") ->
         if "runs" in data and isinstance(data["runs"], list) and len(data["runs"]) > 0:
             data = data["runs"][0]
             
-        start_cap = data.get("start_balance", data.get("initial_capital", data.get("starting_balance", 0.0)))
-        end_cap = data.get("end_balance", data.get("ending_balance", 0.0))
-        net_pnl = data.get("net_pnl", 0.0)
-        roi_pct = (net_pnl / start_cap * 100) if start_cap > 0 else data.get("net_roi_pct", 0.0)
+        mode = data.get("mode", "Insane Scalper")
+        start_cap = float(data.get("initial_capital", data.get("initial_balance", data.get("start_balance", data.get("starting_balance", 90.0)))))
+        end_cap = float(data.get("ending_capital", data.get("ending_balance", data.get("end_balance", 0.0))))
+        peak_cap = float(data.get("peak_capital", data.get("peak_balance", end_cap)))
+        net_pnl = float(data.get("net_pnl", 0.0))
+        gross_pnl = float(data.get("gross_pnl", net_pnl))
+        total_fees = float(data.get("total_fees", 0.0))
+        roi_pct = float(data.get("roi_pct", (net_pnl / start_cap * 100) if start_cap > 0 else 0.0))
         
-        start_time = data.get("start_pkt", data.get("start_time", data.get("start_date", "")))
-        end_time = data.get("end_pkt", data.get("end_time", data.get("end_date", "")))
-        timeline = data.get("timeframe", "")
+        timeline = data.get("timeline", data.get("date", data.get("timeframe", "")))
         if not timeline:
+            start_time = data.get("start_pkt", data.get("start_time", data.get("start_date", "")))
+            end_time = data.get("end_pkt", data.get("end_time", data.get("end_date", "")))
             if start_time and end_time:
                 timeline = f"{start_time} se {end_time}"
             elif start_time:
-                timeline = f"start {start_time}"
+                timeline = f"date {start_time}"
             else:
-                timeline = "latest backtesting period"
+                timeline = "latest test session"
                 
-        trades = data.get("total_trades", data.get("trades_count", 0))
-        win_rate = data.get("win_rate", data.get("win_rate_pct", 0.0))
-        report_title = os.path.basename(chosen_file).replace(".json", "") if chosen_file else "Backtest"
+        trades = int(data.get("total_trades", data.get("trades_count", 0)))
+        wins = int(data.get("wins", 0))
+        losses = int(data.get("losses", 0))
+        win_rate = float(data.get("win_rate", data.get("win_rate_pct", 0.0)))
+        profit_factor = float(data.get("profit_factor", 0.0))
+        max_drawdown = float(data.get("max_drawdown_pct", data.get("max_drawdown", 0.0)))
         
+        report_title = os.path.basename(chosen_file).replace(".json", "") if chosen_file else "Backtest"
+        source_folder = os.path.basename(os.path.dirname(chosen_file))
+        
+        # Determine strategic verdict
+        if net_pnl > 0 and win_rate >= 60.0:
+            verdict = f"High Performance & Profitable. Net Profit ${net_pnl:+.2f} ({roi_pct:+.2f}%) with strong {win_rate:.1f}% Win Rate."
+        elif net_pnl > 0:
+            verdict = f"Net Profitable (${net_pnl:+.2f}, {roi_pct:+.2f}% ROI)."
+        elif gross_pnl > 0 and net_pnl <= 0:
+            verdict = f"Gross Profitable (${gross_pnl:+.2f}) lekin exchange fees (${total_fees:.2f}) ki wajah se net PnL ${net_pnl:+.2f} ({roi_pct:+.2f}%) raha."
+        else:
+            verdict = f"Drawdown phase: Net PnL ${net_pnl:+.2f} ({roi_pct:+.2f}%), Drawdown {max_drawdown:.1f}%."
+            
         # Urdu Spoken Summary
         urdu_summary = (
-            f"Sir, latest backtest report ki summary yeh hai: "
-            f"Timeline {timeline} thi. "
-            f"Starting balance ${start_cap:.2f} tha aur ending balance ${end_cap:.2f} raha, "
-            f"jis mein net PnL ${net_pnl:+.2f} ({roi_pct:+.2f}%) raha. "
-            f"Total {trades} trades theen aur win rate {win_rate:.1f}% raha."
+            f"Sir, {source_folder} se latest backtest report '{report_title}' ki verdicts yeh hain: "
+            f"Target {timeline} tha aur mode {mode} tha. "
+            f"Starting balance ${start_cap:.2f} se ending balance ${end_cap:.2f} raha, "
+            f"jis mein net PnL ${net_pnl:+.2f} ({roi_pct:+.2f}%) record hua. "
+            f"Total {trades} trades mein {wins} wins aur {losses} losses ke sath win rate {win_rate:.1f}% raha."
         )
+        if total_fees > 0:
+            urdu_summary += f" Total exchange fees ${total_fees:.2f} rahi."
         
         return {
             "status": "success",
             "report_file": report_title,
+            "source_folder": source_folder,
+            "full_path": chosen_file,
+            "mode": mode,
+            "timeline": timeline,
             "start_capital": start_cap,
             "end_capital": end_cap,
+            "peak_capital": peak_cap,
             "net_pnl": net_pnl,
+            "gross_pnl": gross_pnl,
+            "total_fees": total_fees,
             "roi_pct": roi_pct,
-            "timeline": timeline,
             "total_trades": trades,
+            "wins": wins,
+            "losses": losses,
             "win_rate_pct": win_rate,
+            "profit_factor": profit_factor,
+            "max_drawdown_pct": max_drawdown,
+            "verdict": verdict,
             "spoken_summary": urdu_summary,
             "message": urdu_summary
         }
@@ -1314,14 +1354,19 @@ def get_latest_backtest_report_summary(bot_dir: str = "F:\\binance_mexc_bot") ->
         logger.exception("Error reading backtest report")
         return {"status": "error", "error": str(e), "message": f"Report error: {str(e)}"}
 
-def check_scalper_bot_status(base_url: str = "https://scalper-bot.84-247-185-16.plesk.page") -> Dict[str, Any]:
+def check_scalper_bot_status(base_url: Optional[str] = None) -> Dict[str, Any]:
     """
-    Connects to the live Scalper Bot web dashboard (https://scalper-bot.84-247-185-16.plesk.page/),
+    Connects to the live Scalper Bot web dashboard (https://boring-colden.84-247-185-16.plesk.page/),
     authenticates with credentials, and extracts Market Sentiment Score, Regime, Total Balance, and Active Trades in Urdu.
     """
     import requests
     import urllib3
     try:
+        urllib3.disable_warnings()
+        target_url = base_url or getattr(config, "SCALPER_BOT_URL", "https://boring-colden.84-247-185-16.plesk.page")
+        email = getattr(config, "SCALPER_BOT_EMAIL", "abdullah2843@gmail.com")
+        password = getattr(config, "SCALPER_BOT_PASSWORD", "@7940")
+        
         session = requests.Session()
         session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -1330,17 +1375,17 @@ def check_scalper_bot_status(base_url: str = "https://scalper-bot.84-247-185-16.
         # Set Plesk technical domain bypass cookie
         session.cookies.set("plesk_technical_domain", "1")
         
-        login_url = f"{base_url.rstrip('/')}/auth/login"
-        status_url = f"{base_url.rstrip('/')}/status"
+        login_url = f"{target_url.rstrip('/')}/auth/login"
+        status_url = f"{target_url.rstrip('/')}/status"
         
         # Credentials
         payload = {
-            "email": "abdullah2843@gmail.com",
-            "password": "7940"
+            "email": email,
+            "password": password
         }
         
-        login_res = session.post(login_url, json=payload, verify=False, timeout=20)
-        status_res = session.get(status_url, verify=False, timeout=20)
+        login_res = session.post(login_url, json=payload, verify=False, timeout=15)
+        status_res = session.get(status_url, verify=False, timeout=15)
         if status_res.status_code != 200:
             return {
                 "status": "error",
@@ -1350,8 +1395,11 @@ def check_scalper_bot_status(base_url: str = "https://scalper-bot.84-247-185-16.
         data = status_res.json()
         
         # Extract Key Metrics
-        balance = data.get("balance", data.get("settings", {}).get("test_balance", 40.0))
+        balance = data.get("balance", data.get("settings", {}).get("test_balance", 0.0))
         free_balance = data.get("free_balance", balance)
+        real_balance = data.get("real_balance", 0.0)
+        net_pnl = data.get("net_pnl", data.get("realized_net_pnl", 0.0))
+        total_pnl = data.get("total_pnl", 0.0)
         
         ms = data.get("market_sentiment", {})
         daily_ms = ms.get("daily", ms.get("hourly", {}))
@@ -1359,18 +1407,28 @@ def check_scalper_bot_status(base_url: str = "https://scalper-bot.84-247-185-16.
         regime_label = daily_ms.get("label", daily_ms.get("regime_state", "Neutral"))
         regime_bias = daily_ms.get("bias", "neutral")
         
-        active_trades = data.get("active_trades", [])
-        num_active = len(active_trades) if isinstance(active_trades, list) else 0
+        raw_trades = data.get("active_trades", {})
+        if isinstance(raw_trades, dict):
+            active_trades = list(raw_trades.values())
+        elif isinstance(raw_trades, list):
+            active_trades = raw_trades
+        else:
+            active_trades = []
+            
+        num_active = data.get("active_trade_count", len(active_trades))
+        closed_trades_count = data.get("closed_trades_count", 0)
         
-        bot_state = data.get("bot_state", data.get("trading_state", "ENABLED"))
-        net_profit = data.get("net_profit", 0.0)
+        bot_mode = data.get("settings", {}).get("mode", "Scalper Bot")
+        account_mode = data.get("settings", {}).get("account_mode", "test")
         
         # Spoken Urdu Summary
-        trade_status_str = f"{num_active} active trades chal rahi hain" if num_active > 0 else "filhal koi active trade nahi hai"
+        trade_status_str = f"{num_active} active trades chal rahi hain" if num_active > 0 else "filhal koi active trade open nahi hai"
+        pnl_str = f"+${net_pnl:.2f}" if net_pnl >= 0 else f"-${abs(net_pnl):.2f}"
+        
         urdu_summary = (
-            f"Sir, trading bot ka market sentiment score {sentiment_score:.0f} {regime_label} hai. "
-            f"Total balance ${balance:.2f} USDT hai aur {trade_status_str}. "
-            f"Bot {bot_state} hai."
+            f"Sir, trading bot online hai. Market sentiment score {sentiment_score:.0f} {regime_label} hai. "
+            f"Test balance ${balance:.2f} USDT hai aur real balance ${real_balance:.2f} USDT hai. "
+            f"Net PnL {pnl_str} USDT hai aur {trade_status_str} (Total {closed_trades_count} closed trades)."
         )
         
         return {
@@ -1380,10 +1438,14 @@ def check_scalper_bot_status(base_url: str = "https://scalper-bot.84-247-185-16.
             "regime_bias": regime_bias,
             "total_balance": balance,
             "free_balance": free_balance,
+            "real_balance": real_balance,
+            "net_pnl": net_pnl,
+            "total_pnl": total_pnl,
             "active_trades_count": num_active,
+            "closed_trades_count": closed_trades_count,
             "active_trades": active_trades,
-            "bot_state": bot_state,
-            "net_profit": net_profit,
+            "bot_mode": bot_mode,
+            "account_mode": account_mode,
             "spoken_summary": urdu_summary,
             "message": urdu_summary
         }
@@ -2004,7 +2066,7 @@ ALIAS_GROUPS = [
     },
     {
         "keywords": ["scalper", "scalper bot", "scalper dashboard"],
-        "url": "https://scalper-bot.84-247-185-16.plesk.page/",
+        "url": "https://boring-colden.84-247-185-16.plesk.page/",
         "name": "Scalper Bot Dashboard"
     },
     {
