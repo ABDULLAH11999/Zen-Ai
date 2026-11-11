@@ -122,6 +122,33 @@ async def generate_tts_base64(text: str) -> Optional[str]:
 
     return None
 
+@app.get("/static/web_3d_particles.json")
+async def get_web_3d_particles():
+    """Serves real 3D dense reference particles for web portal."""
+    json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "web_3d_particles.json")
+    if os.path.exists(json_path):
+        with open(json_path, "r", encoding="utf-8") as f:
+            return Response(content=f.read(), media_type="application/json")
+    raise HTTPException(status_code=404, detail="3D particles not found")
+
+@app.get("/static/head_scanlines.json")
+async def get_head_scanlines():
+    """Serves real 3D head scanline mesh points."""
+    json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "head_scanlines.json")
+    if os.path.exists(json_path):
+        with open(json_path, "r", encoding="utf-8") as f:
+            return Response(content=f.read(), media_type="application/json")
+    raise HTTPException(status_code=404, detail="Head scanlines not found")
+
+@app.get("/static/hologram_face.png")
+async def get_hologram_face():
+    """Serves the real 3D blended hologram face texture matching Image 1."""
+    face_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "hologram_face.png")
+    if os.path.exists(face_path):
+        with open(face_path, "rb") as f:
+            return Response(content=f.read(), media_type="image/png")
+    raise HTTPException(status_code=404, detail="Hologram face texture not found")
+
 @app.get("/api/status")
 async def api_status():
     """Returns live PC telemetry."""
@@ -217,6 +244,80 @@ async def api_voice_command(audio: UploadFile = File(...)):
             "reply_text": f"Error: {str(e)}",
             "transcription": ""
         }
+
+@app.post("/api/dictate_stt")
+async def api_dictate_stt(audio: UploadFile = File(...)):
+    """Receives recorded audio from browser mic and transcribes into English or Roman Urdu using English alphabets."""
+    try:
+        audio_bytes = await audio.read()
+        if len(audio_bytes) < 600:
+            return {"status": "error", "text": ""}
+
+        from groq import Groq
+        groq_client = Groq(api_key=config.GROQ_API_KEY, timeout=6.0)
+
+        prompt_guide = (
+            "Transcribe speech accurately. If speech is in English, transcribe in standard English. "
+            "If speech is in Urdu or Hindi, transcribe strictly in Roman Urdu using English alphabets (Latin characters), "
+            "e.g.: kya haal he, brightness 25 kardo, scalper bot check karo, reports dikhao, system status batao."
+        )
+
+        transcription_resp = groq_client.audio.transcriptions.create(
+            file=("dictation.wav", audio_bytes, "audio/wav"),
+            model="whisper-large-v3-turbo",
+            prompt=prompt_guide,
+            temperature=0.0
+        )
+        text = transcription_resp.text.strip() if transcription_resp else ""
+
+        # Check if non-Latin Urdu/Arabic or Devanagari script is present
+        has_non_latin = any(('\u0600' <= c <= '\u06FF') or ('\u0900' <= c <= '\u097F') for c in text)
+        if has_non_latin and config.GROQ_API_KEY:
+            try:
+                import re
+                resp = groq_client.chat.completions.create(
+                    model=config.GROQ_MODEL,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a transliterator. Transliterate Urdu or Hindi text into natural Roman Urdu using standard English alphabet (e.g. 'kya haal he', 'brightness 25 kardo'). Keep English words in English. Return ONLY the Roman Urdu text without explanations or quotes."
+                        },
+                        {"role": "user", "content": text}
+                    ],
+                    temperature=0.0,
+                    max_tokens=80
+                )
+                roman = resp.choices[0].message.content.strip()
+                roman = re.sub(r"<think>.*?</think>", "", roman, flags=re.DOTALL).strip('\"\' ')
+                if roman:
+                    text = roman
+            except Exception as tr_err:
+                logger.debug(f"Transliteration error: {tr_err}")
+
+        return {"status": "success", "text": text}
+    except Exception as e:
+        logger.error(f"Error in api_dictate_stt: {e}")
+        return {"status": "error", "text": "", "error": str(e)}
+
+@app.get("/api/system_vitals")
+async def api_system_vitals():
+    """Returns real-time CPU, RAM, and Battery percentages for portal telemetry."""
+    import psutil
+    try:
+        cpu = psutil.cpu_percent(interval=None)
+        ram = psutil.virtual_memory().percent
+        batt = psutil.sensors_battery()
+        batt_pct = batt.percent if batt else 100
+        is_plugged = batt.power_plugged if batt else True
+        return {
+            "status": "success",
+            "cpu": cpu,
+            "ram": ram,
+            "battery": batt_pct,
+            "plugged": is_plugged
+        }
+    except Exception:
+        return {"status": "error", "cpu": 0, "ram": 0, "battery": 100, "plugged": True}
 
 from system_tools import (
     get_system_status,
@@ -314,24 +415,24 @@ async def api_quick_action(payload: dict):
 
 @app.get("/", response_class=HTMLResponse)
 async def mobile_portal_ui():
-    """Returns stunning Mobile Cyberpunk Web Portal for iPhone 12 Pro."""
+    """Returns stunning Cyberpunk Panoramic Web Portal for Desktop & Mobile."""
     html_content = """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Z.E.N. // Mobile Controller</title>
+    <title>Z.E.N. // Command Center HUD</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-base: #07090e;
-            --card-bg: rgba(16, 22, 34, 0.75);
-            --card-border: rgba(0, 240, 255, 0.15);
+            --bg-base: #060911;
+            --card-bg: rgba(14, 20, 32, 0.85);
+            --card-border: rgba(0, 240, 255, 0.18);
             --cyan-glow: #00f0ff;
-            --blue-accent: #0070f3;
-            --purple-glow: #7928ca;
+            --blue-accent: #0284c7;
+            --purple-glow: #a855f7;
             --text-main: #f0f4fc;
             --text-dim: #8b9bb4;
             --danger: #ff0055;
@@ -349,8 +450,8 @@ async def mobile_portal_ui():
             font-family: 'Outfit', sans-serif;
             background-color: var(--bg-base);
             background-image: 
-                radial-gradient(circle at 50% 0%, rgba(0, 240, 255, 0.08) 0%, transparent 50%),
-                radial-gradient(circle at 100% 100%, rgba(121, 40, 202, 0.08) 0%, transparent 50%);
+                radial-gradient(circle at 50% 0%, rgba(0, 240, 255, 0.09) 0%, transparent 50%),
+                radial-gradient(circle at 100% 100%, rgba(168, 85, 247, 0.08) 0%, transparent 50%);
             color: var(--text-main);
             min-height: 100vh;
             padding: 16px;
@@ -359,13 +460,55 @@ async def mobile_portal_ui():
             align-items: center;
         }
 
-        .container {
+        /* Responsive Panoramic Grid */
+        .portal-layout {
             width: 100%;
             max-width: 480px;
             display: flex;
             flex-direction: column;
             gap: 16px;
             padding-bottom: 24px;
+            transition: all 0.3s ease;
+        }
+
+        @media (min-width: 1024px) {
+            .portal-layout {
+                max-width: 1440px;
+                display: grid;
+                grid-template-columns: 310px 1fr 340px;
+                gap: 20px;
+                align-items: start;
+            }
+        }
+
+        .side-col {
+            display: none;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        @media (min-width: 1024px) {
+            .side-col {
+                display: flex;
+            }
+        }
+
+        .center-col {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            width: 100%;
+        }
+
+        /* Generic Glass Card */
+        .glass-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 18px;
+            padding: 16px;
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
         }
 
         /* Header */
@@ -376,9 +519,8 @@ async def mobile_portal_ui():
             background: var(--card-bg);
             border: 1px solid var(--card-border);
             padding: 14px 18px;
-            border-radius: 16px;
+            border-radius: 18px;
             backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
         }
 
         .brand {
@@ -388,17 +530,17 @@ async def mobile_portal_ui():
         }
 
         .brand-icon {
-            width: 32px;
-            height: 32px;
-            border-radius: 8px;
+            width: 34px;
+            height: 34px;
+            border-radius: 10px;
             background: linear-gradient(135deg, var(--cyan-glow), var(--purple-glow));
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 800;
-            font-size: 16px;
+            font-size: 17px;
             color: #000;
-            box-shadow: 0 0 15px rgba(0, 240, 255, 0.4);
+            box-shadow: 0 0 16px rgba(0, 240, 255, 0.45);
         }
 
         .brand-title {
@@ -408,11 +550,34 @@ async def mobile_portal_ui():
             color: #fff;
         }
 
-        .status-badge {
-            font-family: 'JetBrains Mono', monospace;
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .fullscreen-btn {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid var(--card-border);
+            color: #00f0ff;
+            padding: 6px 12px;
+            border-radius: 10px;
             font-size: 12px;
             font-weight: 600;
-            padding: 4px 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .fullscreen-btn:hover {
+            background: rgba(0, 240, 255, 0.15);
+            border-color: var(--cyan-glow);
+        }
+
+        .status-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 5px 11px;
             border-radius: 20px;
             background: rgba(0, 255, 136, 0.1);
             color: var(--success);
@@ -437,25 +602,44 @@ async def mobile_portal_ui():
             100% { opacity: 1; transform: scale(1); }
         }
 
+        /* Canvas AI Hologram Visualizer */
+        .canvas-card {
+            background: #080d1a;
+            border: 1px solid var(--card-border);
+            border-radius: 22px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 8px 35px rgba(0,0,0,0.6);
+        }
+
+        #visualizer-canvas {
+            width: 100%;
+            max-width: 440px;
+            height: 220px;
+            display: block;
+        }
+
         /* Voice Central Controller */
         .voice-card {
             background: var(--card-bg);
             border: 1px solid var(--card-border);
-            border-radius: 24px;
-            padding: 24px 16px;
+            border-radius: 22px;
+            padding: 20px 16px;
             display: flex;
             flex-direction: column;
             align-items: center;
             text-align: center;
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
             position: relative;
             overflow: hidden;
         }
 
         .mic-btn-wrapper {
             position: relative;
-            margin: 16px 0;
+            margin: 12px 0;
         }
 
         .mic-glow {
@@ -463,8 +647,8 @@ async def mobile_portal_ui():
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            width: 140px;
-            height: 140px;
+            width: 130px;
+            height: 130px;
             border-radius: 50%;
             background: radial-gradient(circle, rgba(0, 240, 255, 0.25) 0%, transparent 70%);
             pointer-events: none;
@@ -484,13 +668,13 @@ async def mobile_portal_ui():
         }
 
         .mic-btn {
-            width: 96px;
-            height: 96px;
+            width: 88px;
+            height: 88px;
             border-radius: 50%;
             background: linear-gradient(135deg, #121d2d, #1a273b);
             border: 2px solid var(--cyan-glow);
             color: var(--cyan-glow);
-            font-size: 38px;
+            font-size: 34px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -509,10 +693,10 @@ async def mobile_portal_ui():
         }
 
         .voice-status-text {
-            font-size: 15px;
+            font-size: 14px;
             font-weight: 600;
             color: var(--text-dim);
-            margin-top: 6px;
+            margin-top: 4px;
         }
 
         .voice-status-text.active {
@@ -520,14 +704,12 @@ async def mobile_portal_ui():
             text-shadow: 0 0 10px rgba(0, 240, 255, 0.5);
         }
 
-        /* Live Dialogue Log */
+        /* Dialogue Box */
         .dialogue-card {
             background: var(--card-bg);
             border: 1px solid var(--card-border);
             border-radius: 18px;
             padding: 16px;
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
             display: flex;
             flex-direction: column;
             gap: 12px;
@@ -535,7 +717,7 @@ async def mobile_portal_ui():
 
         .card-header {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 12px;
+            font-size: 11px;
             color: var(--cyan-glow);
             text-transform: uppercase;
             letter-spacing: 1px;
@@ -548,7 +730,7 @@ async def mobile_portal_ui():
             padding: 12px 14px;
             border-radius: 12px;
             font-size: 14px;
-            line-height: 1.4;
+            line-height: 1.45;
         }
 
         .user-bubble {
@@ -558,12 +740,12 @@ async def mobile_portal_ui():
         }
 
         .zen-bubble {
-            background: rgba(121, 40, 202, 0.1);
+            background: rgba(168, 85, 247, 0.1);
             border-left: 3px solid var(--purple-glow);
             color: #e0d4ff;
         }
 
-        /* Quick Control Actions */
+        /* Controls Grid */
         .controls-grid {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
@@ -573,11 +755,11 @@ async def mobile_portal_ui():
         .action-btn {
             background: rgba(18, 26, 42, 0.85);
             border: 1px solid rgba(0, 240, 255, 0.15);
-            padding: 14px 12px;
+            padding: 13px 12px;
             border-radius: 14px;
             color: var(--text-main);
             font-family: 'Outfit', sans-serif;
-            font-size: 14px;
+            font-size: 13.5px;
             font-weight: 600;
             display: flex;
             align-items: center;
@@ -587,51 +769,25 @@ async def mobile_portal_ui():
             transition: all 0.2s ease;
         }
 
+        .action-btn:hover {
+            border-color: var(--cyan-glow);
+            background: rgba(0, 240, 255, 0.12);
+        }
+
         .action-btn:active {
             transform: scale(0.96);
-            background: rgba(0, 240, 255, 0.15);
-            border-color: var(--cyan-glow);
         }
 
-        .action-btn.unlock-btn {
-            grid-column: span 2;
-            background: linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(121, 40, 202, 0.15));
-            border-color: rgba(0, 240, 255, 0.4);
-            font-size: 15px;
-            padding: 16px;
-        }
-
-        /* Live Screen Modal / Viewer */
-        .screen-preview {
-            width: 100%;
-            border-radius: 12px;
-            border: 1px solid var(--card-border);
-            display: none;
-            margin-top: 8px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-        }
-
-        /* Typed Command Bar */
-        .container {
-            width: 100%;
-            max-width: 480px;
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-            padding-bottom: calc(110px + env(safe-area-inset-bottom));
-        }
-
+        /* Typed Command Bar with Integrated Dictation Mic */
         .text-input-bar {
             display: flex;
+            align-items: center;
             gap: 8px;
-            background: rgba(16, 22, 34, 0.95);
+            background: rgba(14, 20, 32, 0.95);
             border: 1px solid var(--card-border);
-            padding: 8px 8px 8px 16px;
+            padding: 6px 8px 6px 14px;
             border-radius: 16px;
-            margin-bottom: calc(40px + env(safe-area-inset-bottom));
             box-shadow: 0 8px 30px rgba(0, 0, 0, 0.7);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
         }
 
         .text-input-bar input {
@@ -640,372 +796,792 @@ async def mobile_portal_ui():
             border: none;
             color: #fff;
             font-family: 'Outfit', sans-serif;
-            font-size: 15px;
+            font-size: 14px;
             outline: none;
         }
 
-        .text-input-bar button {
-            background: var(--cyan-glow);
-            color: #000;
+        .dictate-btn {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(0, 240, 255, 0.3);
+            color: #00f0ff;
+            padding: 9px 13px;
+            border-radius: 10px;
+            font-size: 15px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .dictate-btn.active {
+            background: #ff0055;
+            border-color: #ff0055;
+            color: #fff;
+            animation: pulse 1.2s infinite;
+        }
+
+        .send-btn {
+            background: var(--blue-accent);
+            color: #fff;
             border: none;
             border-radius: 10px;
             padding: 10px 18px;
             font-weight: 700;
+            font-size: 13.5px;
             cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .send-btn:hover {
+            background: #0369a1;
+            box-shadow: 0 0 15px rgba(2, 132, 199, 0.5);
+        }
+
+        /* Left Sidebar: Telemetry & Terminal Logs */
+        .vitals-meter {
+            margin-bottom: 12px;
+        }
+
+        .meter-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-dim);
+            margin-bottom: 4px;
+        }
+
+        .meter-bar {
+            width: 100%;
+            height: 6px;
+            background: #172238;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .meter-fill {
+            height: 100%;
+            width: 0%;
+            background: var(--cyan-glow);
+            transition: width 0.5s ease;
+        }
+
+        .terminal-box {
+            background: #050811;
+            border: 1px solid #172238;
+            border-radius: 12px;
+            height: 340px;
+            overflow-y: auto;
+            padding: 10px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            line-height: 1.6;
+        }
+
+        .log-entry {
+            margin-bottom: 6px;
+        }
+
+        .log-time { color: #475569; }
+        .log-user { color: #38bdf8; }
+        .log-tool { color: #fbbf24; }
+        .log-zen { color: #34d399; }
+        .log-sys { color: #94a3b8; }
+        .log-err { color: #f87171; }
+
+        /* Right Sidebar: Chat History Cards & Inspector */
+        .chat-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 380px;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+
+        .chat-card {
+            background: #0f172a;
+            border: 1px solid #1e293b;
+            border-radius: 12px;
+            padding: 10px 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .chat-card:hover {
+            border-color: var(--cyan-glow);
+            background: #131d35;
+        }
+
+        .chat-card-top {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            font-family: 'JetBrains Mono', monospace;
+            color: #64748b;
+            margin-bottom: 4px;
+        }
+
+        .chat-card-pill {
+            padding: 2px 6px;
+            border-radius: 6px;
+            font-weight: 700;
+            background: #1e1b4b;
+            color: #c084fc;
+        }
+
+        .chat-card-pill.done {
+            background: #064e3b;
+            color: #34d399;
+        }
+
+        .chat-card-prompt {
+            font-size: 12.5px;
+            font-weight: 600;
+            color: #e2e8f0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .inspector-box {
+            background: #050811;
+            border: 1px solid #172238;
+            border-radius: 12px;
+            padding: 12px;
+            font-size: 12.5px;
+            line-height: 1.5;
+            color: #e2e8f0;
+            max-height: 240px;
+            overflow-y: auto;
         }
     </style>
 </head>
 <body>
 
-<div class="container">
-    <!-- Header -->
-    <div class="header">
-        <div class="brand">
-            <div class="brand-icon">⚡</div>
-            <div>
-                <div class="brand-title">Z.E.N. MOBILE</div>
-                <div style="font-size: 11px; color: var(--text-dim);">Sir Abdullah Irfan Portal</div>
+<div class="portal-layout">
+    <!-- LEFT SIDEBAR: Telemetry & Logs -->
+    <div class="side-col">
+        <div class="glass-card">
+            <div class="card-header" style="margin-bottom: 12px;">
+                <span>⚡ SYSTEM TELEMETRY</span>
+                <span id="vitals-status" style="color: var(--success); font-size: 10px;">LIVE</span>
+            </div>
+            
+            <div class="vitals-meter">
+                <div class="meter-label">
+                    <span>CPU LOAD</span>
+                    <span id="cpu-val">0%</span>
+                </div>
+                <div class="meter-bar"><div class="meter-fill" id="cpu-fill"></div></div>
+            </div>
+
+            <div class="vitals-meter">
+                <div class="meter-label">
+                    <span>RAM USAGE</span>
+                    <span id="ram-val">0%</span>
+                </div>
+                <div class="meter-bar"><div class="meter-fill" id="ram-fill" style="background: var(--purple-glow);"></div></div>
+            </div>
+
+            <div class="vitals-meter" style="margin-bottom: 6px;">
+                <div class="meter-label">
+                    <span>BATTERY</span>
+                    <span id="batt-val">100% ⚡</span>
+                </div>
+            </div>
+
+            <div style="font-size: 10.5px; color: #64748b; font-family: 'JetBrains Mono', monospace; margin-top: 8px; border-top: 1px solid #1e293b; padding-top: 8px;">
+                CORE: Groq LPU + Gemini 3.7<br>
+                VOICE: hi-IN-MadhurNeural (+12%)
             </div>
         </div>
-        <div class="status-badge" id="portal-status">
-            <div class="status-dot"></div>
-            <span>CONNECTED</span>
-        </div>
-    </div>
 
-    <!-- Voice Control Card -->
-    <div class="voice-card">
-        <div style="font-size: 13px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px;">iPhone Voice Stream</div>
-        
-        <div class="mic-btn-wrapper" id="mic-wrapper">
-            <div class="mic-glow"></div>
-            <button class="mic-btn" id="mic-btn">🎙️</button>
-        </div>
-
-        <div class="voice-status-text" id="voice-label">Tap to Speak with ZEN</div>
-    </div>
-
-    <!-- Dialogue Bubble -->
-    <div class="dialogue-card">
-        <div class="card-header">
-            <span>Live Transmission</span>
-            <span id="audio-indicator" style="color: var(--success); font-size: 11px; cursor: pointer;" onclick="replayLastAudio()">🔊 Speaker Active</span>
-        </div>
-        <div class="speech-bubble user-bubble" id="user-transcript">
-            Tap the mic button or type below to send commands to your laptop.
-        </div>
-        <div class="speech-bubble zen-bubble" id="zen-reply">
-            <div id="zen-reply-text">Sir, ZEN mobile link tayyar hai. Hukum kijiye?</div>
-            <div style="margin-top: 8px; display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-size: 10px; color: var(--text-dim);">🔇 Silent Switch OFF rakhein</span>
-                <button id="replay-btn" onclick="replayLastAudio()" style="background: rgba(0,240,255,0.15); border: 1px solid rgba(0,240,255,0.4); color: #00f0ff; padding: 5px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer;">🔊 Awaz Suniye</button>
+        <div class="glass-card" style="flex: 1;">
+            <div class="card-header" style="margin-bottom: 8px;">
+                <span>TERMINAL LOGS</span>
+                <button onclick="clearTerminal()" style="background: transparent; border: none; color: #64748b; font-size: 10px; cursor: pointer;">Clear</button>
             </div>
-        </div>
-    </div>
-
-    <!-- Quick Control Actions -->
-    <div class="controls-grid">
-        <button class="action-btn toggle-display-btn" id="display-toggle-btn" style="grid-column: span 2; background: linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(121, 40, 202, 0.15)); border-color: rgba(0, 240, 255, 0.4); font-size: 15px; padding: 15px;" onclick="toggleDisplayPower()">
-            🖥️ Display: ON (Tap to Black)
-        </button>
-        <button class="action-btn" onclick="toggleScreen()">
-            🖥️ View Screen
-        </button>
-        <button class="action-btn" onclick="triggerAction('close_apps')">
-            🛑 Close All Windows Apps
-        </button>
-        <button class="action-btn" onclick="triggerAction('toggle_bt')">
-            📶 Toggle Bluetooth
-        </button>
-        <button class="action-btn" onclick="confirmShutdown()">
-            ⚡ Shutdown PC
-        </button>
-        <button class="action-btn" onclick="triggerAction('backtest_report')">
-            📈 Backtest Report
-        </button>
-        <button class="action-btn" onclick="triggerAction('check_bot')">
-            🤖 Check Bot
-        </button>
-    </div>
-
-    <!-- Cyberpunk Confirmation Modal for Shutdown -->
-    <div id="shutdown-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.82); z-index: 99999; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); align-items: center; justify-content: center; padding: 20px;">
-        <div style="background: #0e1422; border: 1px solid rgba(255, 0, 85, 0.5); border-radius: 20px; padding: 24px; max-width: 360px; width: 100%; box-shadow: 0 0 35px rgba(255, 0, 85, 0.35); text-align: center; display: flex; flex-direction: column; gap: 14px;">
-            <div style="font-size: 40px; filter: drop-shadow(0 0 10px rgba(255, 0, 85, 0.6));">⚠️</div>
-            <div style="font-family: 'Outfit', sans-serif; font-size: 18px; font-weight: 700; color: #fff;">Confirm System Shutdown?</div>
-            <div style="font-size: 13.5px; color: var(--text-dim); line-height: 1.45;">Sir, kya aap sach mein PC / Laptop shutdown karna chahte hain? Tamam running tasks close ho jayenge.</div>
-            <div style="display: flex; gap: 10px; margin-top: 8px;">
-                <button onclick="closeShutdownModal()" style="flex: 1; background: rgba(255,255,255,0.08); border: 1px solid var(--card-border); color: #fff; padding: 12px; border-radius: 12px; font-weight: 600; font-size: 14px; cursor: pointer;">Cancel</button>
-                <button onclick="executeShutdown()" style="flex: 1; background: linear-gradient(135deg, #ff0055, #ff3366); border: none; color: #fff; padding: 12px; border-radius: 12px; font-weight: 700; font-size: 14px; cursor: pointer; box-shadow: 0 0 18px rgba(255, 0, 85, 0.5);">Yes, Shutdown</button>
+            <div class="terminal-box" id="terminal-feed">
+                <div class="log-entry"><span class="log-time">[System]</span> <span class="log-sys">ZEN Panoramic HUD Initialized.</span></div>
+                <div class="log-entry"><span class="log-time">[System]</span> <span class="log-sys">Dual Engine Ready: Groq LPU + Gemini.</span></div>
             </div>
         </div>
     </div>
 
-    <!-- Real-time Desktop Screen Viewer Container -->
-    <div id="screen-container" style="display: none; width: 100%; flex-direction: column; gap: 8px; background: rgba(16, 22, 34, 0.85); border: 1px solid var(--card-border); padding: 12px; border-radius: 16px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--cyan-glow); font-family: 'JetBrains Mono', monospace;">
-            <span id="screen-status-text">🖥️ Live Desktop Feed</span>
-            <div style="display: flex; gap: 8px;">
-                <button onclick="refreshScreen()" style="background: rgba(0,240,255,0.15); color: #00f0ff; border: 1px solid rgba(0,240,255,0.4); padding: 5px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer;">🔄 Refresh</button>
-                <button onclick="toggleScreen()" style="background: rgba(255,0,85,0.15); color: #ff0055; border: 1px solid rgba(255,0,85,0.4); padding: 5px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer;">✕ Close</button>
+    <!-- CENTER COLUMN: Holographic Core & Command -->
+    <div class="center-col">
+        <!-- Top Header -->
+        <div class="header">
+            <div class="brand">
+                <div class="brand-icon">⚡</div>
+                <div>
+                    <div class="brand-title">Z.E.N. // CORE</div>
+                    <div style="font-size: 11px; color: var(--text-dim);">Autonomous Workstation Controller</div>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button class="fullscreen-btn" onclick="toggleFullscreen()">⛶ Fullscreen</button>
+                <div class="status-badge" id="portal-status">
+                    <div class="status-dot"></div>
+                    <span id="portal-status-text">ONLINE</span>
+                </div>
             </div>
         </div>
-        <img id="desktop-screen-img" alt="Desktop Screen" style="display: block; width: 100%; border-radius: 10px; border: 1px solid rgba(255,255,255,0.1);" />
+
+        <!-- Futuristic Holographic Visualizer Canvas -->
+        <div class="canvas-card">
+            <canvas id="visualizer-canvas" width="440" height="220"></canvas>
+            
+        </div>
+
+        <!-- Dialogue Bubble -->
+        <div class="dialogue-card">
+            <div class="card-header">
+                <span>Live Dialogue</span>
+                <span id="audio-indicator" style="color: var(--success); font-size: 11px; cursor: pointer;" onclick="replayLastAudio()">🔊 Speaker Active</span>
+            </div>
+            <div class="speech-bubble user-bubble" id="user-transcript">
+                Tap the mic below or type command to execute.
+            </div>
+            <div class="speech-bubble zen-bubble" id="zen-reply">
+                <div id="zen-reply-text">Sir, ZEN Command Center online hai. Hukum kijiye?</div>
+                <div style="margin-top: 8px; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 10px; color: var(--text-dim);">🔊 Natural Male Voice Active</span>
+                    <button id="replay-btn" onclick="replayLastAudio()" style="background: rgba(0,240,255,0.15); border: 1px solid rgba(0,240,255,0.4); color: #00f0ff; padding: 4px 10px; border-radius: 8px; font-size: 11.5px; font-weight: 600; cursor: pointer;">🔊 Replay</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Interactive Typed Command Bar (With Dictation Mic inside before Send) -->
+        <form class="text-input-bar" onsubmit="sendTextMessage(event)">
+            <input type="text" id="cmd-input" placeholder="Type command in Roman Urdu / English, or use mic..." autocomplete="off" />
+            <button type="button" class="dictate-btn" id="dictate-btn" onclick="toggleTextDictation()" title="Voice Dictation (English / Roman Urdu)">
+                🎙️ <span id="dictate-label" style="font-size: 11px; font-weight: 700;">Mic</span>
+            </button>
+            <button type="submit" class="send-btn" id="send-btn">⚡ Send</button>
+        </form>
+
+        <!-- Quick Control Actions -->
+        <div class="controls-grid">
+            <button class="action-btn toggle-display-btn" id="display-toggle-btn" style="grid-column: span 2; background: linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(168, 85, 247, 0.15)); border-color: rgba(0, 240, 255, 0.4); font-size: 14.5px; padding: 14px;" onclick="toggleDisplayPower()">
+                🖥️ Display: ON (Tap to Black)
+            </button>
+            <button class="action-btn" onclick="toggleScreen()">
+                🖥️ View Screen
+            </button>
+            <button class="action-btn" onclick="triggerAction('close_apps')">
+                🛑 Close Apps
+            </button>
+            <button class="action-btn" onclick="triggerAction('toggle_bt')">
+                📶 Bluetooth
+            </button>
+            <button class="action-btn" onclick="triggerAction('check_bot')">
+                🤖 Check Bot
+            </button>
+            <button class="action-btn" onclick="triggerAction('backtest_report')">
+                📈 Backtest Report
+            </button>
+            <button class="action-btn" onclick="confirmShutdown()" style="color: #ff3366;">
+                ⚡ Shutdown PC
+            </button>
+        </div>
+
+        <!-- Desktop Screen Modal -->
+        <div id="screen-container" style="display: none; width: 100%; flex-direction: column; gap: 8px; background: rgba(16, 22, 34, 0.9); border: 1px solid var(--card-border); padding: 12px; border-radius: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--cyan-glow); font-family: 'JetBrains Mono', monospace;">
+                <span>🖥️ Live Desktop Feed</span>
+                <div style="display: flex; gap: 8px;">
+                    <button onclick="refreshScreen()" style="background: rgba(0,240,255,0.15); color: #00f0ff; border: 1px solid rgba(0,240,255,0.4); padding: 5px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer;">🔄 Refresh</button>
+                    <button onclick="toggleScreen()" style="background: rgba(255,0,85,0.15); color: #ff0055; border: 1px solid rgba(255,0,85,0.4); padding: 5px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer;">✕ Close</button>
+                </div>
+            </div>
+            <img id="desktop-screen-img" alt="Desktop Screen" style="display: block; width: 100%; border-radius: 10px; border: 1px solid rgba(255,255,255,0.1);" />
+        </div>
     </div>
 
-    <!-- Typed Command Bar -->
-    <form class="text-input-bar" onsubmit="sendTextMessage(event)">
-        <input type="text" id="cmd-input" placeholder="Type command in Urdu, Hindi or English..." />
-        <button type="submit">Send</button>
-    </form>
+    <!-- RIGHT SIDEBAR: Chat History & Response Inspector -->
+    <div class="side-col">
+        <div class="glass-card" style="flex: 1;">
+            <div class="card-header" style="margin-bottom: 4px;">
+                <span>💬 CHATS & ACTIONS</span>
+                <span style="font-size: 10px; color: #64748b;" id="chat-count">0 items</span>
+            </div>
+            <div style="font-size: 10.5px; color: var(--text-dim); margin-bottom: 10px;">Click card to inspect full response</div>
+            
+            <div class="chat-list" id="chat-cards-list">
+                <!-- Chat cards dynamically appended here -->
+            </div>
+        </div>
+
+        <div class="glass-card">
+            <div class="card-header" style="margin-bottom: 8px;">
+                <span>RESPONSE INSPECTOR</span>
+            </div>
+            <div class="inspector-box" id="inspector-content">
+                Select any card above to view execution details and final response.
+            </div>
+        </div>
+    </div>
 </div>
 
-<!-- Audio Player for ZEN Spoken Voice -->
+<!-- Shutdown Modal -->
+<div id="shutdown-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 99999; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); align-items: center; justify-content: center; padding: 20px;">
+    <div style="background: #0e1422; border: 1px solid rgba(255, 0, 85, 0.5); border-radius: 20px; padding: 24px; max-width: 360px; width: 100%; box-shadow: 0 0 35px rgba(255, 0, 85, 0.35); text-align: center; display: flex; flex-direction: column; gap: 14px;">
+        <div style="font-size: 40px; filter: drop-shadow(0 0 10px rgba(255, 0, 85, 0.6));">⚠️</div>
+        <div style="font-family: 'Outfit', sans-serif; font-size: 18px; font-weight: 700; color: #fff;">Confirm PC Shutdown?</div>
+        <div style="font-size: 13.5px; color: var(--text-dim); line-height: 1.45;">Sir, kya aap sach mein PC shutdown karna chahte hain? Tamam running tasks close ho jayenge.</div>
+        <div style="display: flex; gap: 10px; margin-top: 8px;">
+            <button onclick="closeShutdownModal()" style="flex: 1; background: rgba(255,255,255,0.08); border: 1px solid var(--card-border); color: #fff; padding: 12px; border-radius: 12px; font-weight: 600; font-size: 14px; cursor: pointer;">Cancel</button>
+            <button onclick="executeShutdown()" style="flex: 1; background: linear-gradient(135deg, #ff0055, #ff3366); border: none; color: #fff; padding: 12px; border-radius: 12px; font-weight: 700; font-size: 14px; cursor: pointer; box-shadow: 0 0 18px rgba(255, 0, 85, 0.5);">Yes, Shutdown</button>
+        </div>
+    </div>
+</div>
+
 <audio id="tts-audio" playsinline preload="auto"></audio>
 
 <script>
-    let mediaRecorder = null;
-    let audioChunks = [];
+    // State
     let isRecording = false;
+    let isDictating = false;
+    let dictationRecorder = null;
+    let dictationChunks = [];
     let lastAudioBase64 = null;
     let lastAudioBlobUrl = null;
+    let chatCardsData = [];
+    let currentAgentState = "IDLE";
 
-    const micBtn = document.getElementById('mic-btn');
-    const micWrapper = document.getElementById('mic-wrapper');
-    const voiceLabel = document.getElementById('voice-label');
     const userTranscript = document.getElementById('user-transcript');
     const zenReplyText = document.getElementById('zen-reply-text');
     const ttsAudio = document.getElementById('tts-audio');
     const audioIndicator = document.getElementById('audio-indicator');
+    const cmdInput = document.getElementById('cmd-input');
+    const dictateBtn = document.getElementById('dictate-btn');
+    const dictateLabel = document.getElementById('dictate-label');
+    const terminalFeed = document.getElementById('terminal-feed');
+    const chatCardsList = document.getElementById('chat-cards-list');
+    const inspectorContent = document.getElementById('inspector-content');
+    const visualizerStatus = document.getElementById('visualizer-status-text');
 
-    // 1-frame silent WAV audio data to prime mobile browsers
-    const SILENT_AUDIO = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
-    let isAudioPrimed = false;
-    let audioCtx = null;
+    // Canvas Hologram Setup
+    const canvas = document.getElementById('visualizer-canvas');
+    const ctx = canvas.getContext('2d');
 
-    function unlockIOSAudio() {
-        try {
-            if (!audioCtx) {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            if (audioCtx.state === 'suspended') {
-                audioCtx.resume();
-            }
-            if (!isAudioPrimed && ttsAudio) {
-                ttsAudio.src = SILENT_AUDIO;
-                const p = ttsAudio.play();
-                if (p !== undefined) {
-                    p.then(() => {
-                        ttsAudio.pause();
-                        isAudioPrimed = true;
-                    }).catch(() => {});
-                }
-            }
-        } catch (e) {}
+    // Real 3D Dense Holographic Head & Connectivity Engine
+    let headPoints = null;
+    let headColors = null;
+
+    fetch("/static/web_3d_particles.json")
+        .then(r => r.json())
+        .then(data => {
+            headPoints = new Float32Array(data.pts.flat());
+            headColors = data.cols;
+        })
+        .catch(err => console.error("Error loading 3D particles:", err));
+
+    // Organic Gaze & Angle Tracking
+    let currentYaw = 0.0, currentPitch = 0.0, currentRoll = 0.0, currentDx = 0.0, currentDy = 0.0;
+    let targetYaw = 0.0, targetPitch = 0.0, targetRoll = 0.0, targetDx = 0.0, targetDy = 0.0;
+    let nextGazeTime = Date.now() + 1000;
+
+    const phi = (1 + Math.sqrt(5)) / 2;
+    const rawNodes = [
+        [-1, phi, 0], [1, phi, 0], [-1, -phi, 0], [1, -phi, 0],
+        [0, -1, phi], [0, 1, phi], [0, -1, -phi], [0, 1, -phi],
+        [phi, 0, -1], [phi, 0, 1], [-phi, 0, -1], [-phi, 0, 1]
+    ];
+    const connectNodes = rawNodes.map(([x, y, z]) => [x * 46, y * 46, z * 46]);
+    const connectEdges = [];
+    for (let i = 0; i < connectNodes.length; i++) {
+        for (let j = i + 1; j < connectNodes.length; j++) {
+            const [x1, y1, z1] = connectNodes[i];
+            const [x2, y2, z2] = connectNodes[j];
+            const d = Math.sqrt((x1-x2)**2 + (y1-y2)**2 + (z1-z2)**2);
+            if (d < 110) connectEdges.push([i, j]);
+        }
     }
 
-    // Automatically unlock audio on first touch anywhere on mobile screen
+    function project3D(x, y, z, yaw, pitch, cx, cy) {
+        const cosY = Math.cos(yaw), sinY = Math.sin(yaw);
+        const x1 = x * cosY + z * sinY;
+        const z1 = -x * sinY + z * cosY;
+        const cosX = Math.cos(pitch), sinX = Math.sin(pitch);
+        const y2 = y * cosX - z1 * sinX;
+        const z2 = y * sinX + z1 * cosX;
+        const fov = 380, dist = 320;
+        const factor = fov / (z2 + dist);
+        return [cx + x1 * factor, cy + y2 * factor, z2];
+    }
+
+    let t3d = 0.0;
+
+    function renderVisualizer() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const cx = canvas.width / 2;
+        const cy = canvas.height / 2;
+        t3d += 0.05;
+
+        const isProcessing = (currentAgentState === "THINKING" || currentAgentState === "PROCESSING" || currentAgentState === "EXECUTING");
+
+        if (isProcessing) {
+            // Render 3D Connectivity Working Cluster
+            const yaw = t3d * 0.95, pitch = t3d * 0.70;
+            const proj = connectNodes.map(([x, y, z]) => project3D(x, y, z, yaw, pitch, cx, cy));
+
+            // Gyroscopic Rings
+            ctx.strokeStyle = "#c084fc";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            for (let i = 0; i <= 24; i++) {
+                const th = i * Math.PI * 2 / 24;
+                const [px, py] = project3D(120 * Math.cos(th), 120 * Math.sin(th) * 0.35, 0, yaw * 1.5, pitch, cx, cy);
+                if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            }
+            ctx.stroke();
+
+            ctx.strokeStyle = "#38bdf8";
+            ctx.beginPath();
+            for (let i = 0; i <= 24; i++) {
+                const th = i * Math.PI * 2 / 24;
+                const [px, py] = project3D(120 * Math.cos(th), 120 * Math.sin(th), 0, -yaw * 1.3, pitch * 1.4, cx, cy);
+                if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            }
+            ctx.stroke();
+
+            // Connections
+            for (const [i1, i2] of connectEdges) {
+                const [x1, y1, z1] = proj[i1];
+                const [x2, y2, z2] = proj[i2];
+                ctx.strokeStyle = (z1 + z2 > 0) ? "#a855f7" : "#4c1d95";
+                ctx.lineWidth = (z1 + z2 > 10) ? 2 : 1;
+                ctx.beginPath();
+                ctx.moveTo(x1, y1);
+                ctx.lineTo(x2, y2);
+                ctx.stroke();
+            }
+
+            // Data Packets traveling
+            for (let p = 0; p < 12; p++) {
+                const [i1, i2] = connectEdges[(p * 3) % connectEdges.length];
+                const [x1, y1] = proj[i1];
+                const [x2, y2] = proj[i2];
+                const prog = (t3d * 2.5 + p * 0.4) % 1.0;
+                const pakX = x1 + (x2 - x1) * prog;
+                const pakY = y1 + (y2 - y1) * prog;
+                ctx.fillStyle = "#00f0ff";
+                ctx.beginPath();
+                ctx.arc(pakX, pakY, 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Nodes
+            const sortedNodes = proj.map((p, i) => ({ p, i })).sort((a, b) => a.p[2] - b.p[2]);
+            for (const item of sortedNodes) {
+                const [px, py, pz] = item.p;
+                const r = Math.max(3, 5.5 + pz * 0.035);
+                ctx.fillStyle = pz > 0 ? "#c084fc" : "#6b21a8";
+                ctx.strokeStyle = pz > 10 ? "#00f0ff" : "#818cf8";
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.arc(px, py, r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+            }
+
+            // Power core
+            ctx.fillStyle = "#0d1b2a";
+            ctx.strokeStyle = "#00f0ff";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(cx, cy, 14, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = "#00f0ff";
+            ctx.font = "bold 11px monospace";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("⚡", cx, cy);
+
+        } else {
+            // Render Dense Real 3D Head Object matching Reference Image
+            const now = Date.now();
+            const isSpeaking = (currentAgentState === "SPEAKING");
+
+            if (isSpeaking) {
+                targetYaw = Math.sin(t3d * 3.2) * 0.08;
+                targetPitch = Math.sin(t3d * 4.5) * 0.05;
+                targetRoll = Math.sin(t3d * 2.5) * 0.03;
+                targetDx = Math.sin(t3d * 2.0) * 5.0;
+                targetDy = Math.sin(t3d * 2.8) * 3.5;
+                nextGazeTime = now + 1200;
+            } else if (now >= nextGazeTime) {
+                if (Math.random() < 0.28) {
+                    targetYaw = (Math.random() - 0.5) * 0.08;
+                    targetPitch = (Math.random() - 0.5) * 0.06;
+                    targetRoll = (Math.random() - 0.5) * 0.03;
+                    targetDx = (Math.random() - 0.5) * 8;
+                    targetDy = (Math.random() - 0.5) * 6;
+                    nextGazeTime = now + 1800 + Math.random() * 1400;
+                } else {
+                    targetYaw = (Math.random() > 0.5 ? 1 : -1) * (0.16 + Math.random() * 0.24);
+                    targetPitch = (Math.random() - 0.5) * 0.36;
+                    targetRoll = -targetYaw * (0.12 + Math.random() * 0.12);
+                    targetDx = targetYaw * 32.0;
+                    targetDy = targetPitch * 20.0;
+                    nextGazeTime = now + 2000 + Math.random() * 2200;
+                }
+            }
+
+            const lerp = 0.055;
+            currentYaw += (targetYaw - currentYaw) * lerp;
+            currentPitch += (targetPitch - currentPitch) * lerp;
+            currentRoll += (targetRoll - currentRoll) * lerp;
+            currentDx += (targetDx - currentDx) * lerp;
+            currentDy += (targetDy - currentDy) * lerp;
+
+            const breathe = Math.sin(t3d * 1.5);
+            const yBreathe = breathe * 3.5;
+            const scale = 0.80 + 0.010 * breathe;
+
+            // Draw Dense 3D Particles at 60 FPS
+            if (headPoints !== null && headColors !== null) {
+                const cosY = Math.cos(currentYaw), sinY = Math.sin(currentYaw);
+                const cosX = Math.cos(currentPitch), sinX = Math.sin(currentPitch);
+                const cosZ = Math.cos(currentRoll), sinZ = Math.sin(currentRoll);
+                const fov = 350.0, dist = 280.0;
+                const liveCx = cx + currentDx;
+                const liveCy = cy + currentDy + yBreathe;
+
+                const mouthOpen = isSpeaking ? (Math.sin(t3d * 16) * 0.5 + 0.5) * 7.0 : 0.0;
+                const totalPts = headColors.length;
+
+                for (let i = 0; i < totalPts; i++) {
+                    let ox = headPoints[i * 3] * scale;
+                    let oy = headPoints[i * 3 + 1] * scale;
+                    let oz = headPoints[i * 3 + 2] * scale;
+
+                    if (isSpeaking && oy > 20 && oy < 60 && oz > 0) {
+                        const tj = (oy - 20) / 40.0;
+                        oy += mouthOpen * Math.sin(tj * Math.PI);
+                    }
+
+                    // Yaw
+                    const x1 = ox * cosY + oz * sinY;
+                    const z1 = -ox * sinY + oz * cosY;
+                    // Pitch
+                    const y2 = oy * cosX - z1 * sinX;
+                    const z2 = oy * sinX + z1 * cosX;
+                    // Roll
+                    const x3 = x1 * cosZ - y2 * sinZ;
+                    const y3 = x1 * sinZ + y2 * cosZ;
+
+                    const factor = fov / (z2 + dist);
+                    const px = Math.round(liveCx + x3 * factor);
+                    const py = Math.round(liveCy + y3 * factor);
+
+                    if (px < 0 || px >= canvas.width || py < 0 || py >= canvas.height) continue;
+
+                    const col = headColors[i];
+                    const a = col[3] / 255.0;
+                    ctx.fillStyle = "rgba(" + col[0] + "," + col[1] + "," + col[2] + "," + a.toFixed(2) + ")";
+                    ctx.fillRect(px, py, 1.4, 1.4);
+                }
+            }
+        }
+
+        requestAnimationFrame(renderVisualizer);
+    }
+    requestAnimationFrame(renderVisualizer);
+
+    function setAgentState(state) {
+        currentAgentState = state.toUpperCase();
+        const map = {
+            "IDLE": "NEURAL CORE ONLINE // STANDBY",
+            "LISTENING": "MIC ACTIVE // LISTENING...",
+            "THINKING": "NEURAL INFERENCE // EXECUTING TOOLS...",
+            "SPEAKING": "SYNTHESIZING SPEECH // TRANSMITTING...",
+            "DICTATING": "VOICE DICTATION // SPEAK NOW (EN/ROMAN URDU)..."
+        };
+        if (visualizerStatus) { visualizerStatus.textContent = map[currentAgentState] || ("STATE: " + currentAgentState); }
+    }
+
+    // Fullscreen Toggle
+    function toggleFullscreen() {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(() => {});
+        } else {
+            if (document.exitFullscreen) document.exitFullscreen();
+        }
+    }
+
+    // Append Terminal Log
+    function addTerminalLog(sender, text, tag) {
+        const time = new Date().toLocaleTimeString();
+        const entry = document.createElement('div');
+        entry.className = "log-entry";
+        entry.innerHTML = `<span class="log-time">[${time}]</span> <span class="log-${tag}">[${sender}]:</span> ${text}`;
+        terminalFeed.appendChild(entry);
+        terminalFeed.scrollTop = terminalFeed.scrollHeight;
+    }
+
+    function clearTerminal() {
+        terminalFeed.innerHTML = "";
+    }
+
+    // Chat History Cards
+    function addChatCard(prompt) {
+        const id = chatCardsData.length;
+        const time = new Date().toLocaleTimeString();
+        const cardObj = { id, time, prompt, response: "Processing...", status: "In Progress" };
+        chatCardsData.push(cardObj);
+
+        const card = document.createElement('div');
+        card.className = "chat-card";
+        card.id = `chat-card-${id}`;
+        card.onclick = () => inspectChat(id);
+        card.innerHTML = `
+            <div class="chat-card-top">
+                <span>[${time}]</span>
+                <span class="chat-card-pill" id="card-pill-${id}">⚡ Running</span>
+            </div>
+            <div class="chat-card-prompt">${prompt}</div>
+        `;
+        chatCardsList.prepend(card);
+        document.getElementById('chat-count').textContent = chatCardsData.length + " items";
+        return id;
+    }
+
+    function updateChatCard(id, response) {
+        if (chatCardsData[id]) {
+            chatCardsData[id].response = response;
+            chatCardsData[id].status = "Completed";
+            const pill = document.getElementById(`card-pill-${id}`);
+            if (pill) {
+                pill.textContent = "✓ Done";
+                pill.className = "chat-card-pill done";
+            }
+            inspectChat(id);
+        }
+    }
+
+    function inspectChat(id) {
+        if (chatCardsData[id]) {
+            const item = chatCardsData[id];
+            inspectorContent.innerHTML = `
+                <div style="font-size: 11px; color: var(--cyan-glow); font-family: 'JetBrains Mono', monospace; margin-bottom: 6px;">[CARD #${id+1} // ${item.time}]</div>
+                <div style="color: #94a3b8; font-size: 11.5px; margin-bottom: 4px;"><strong>PROMPT:</strong></div>
+                <div style="color: #fff; margin-bottom: 10px; font-weight: 600;">${item.prompt}</div>
+                <div style="color: #94a3b8; font-size: 11.5px; margin-bottom: 4px;"><strong>ZEN REPLY:</strong></div>
+                <div style="color: #34d399;">${item.response}</div>
+            `;
+        }
+    }
+
+    // Audio Playback
+    function unlockIOSAudio() {
+        if (ttsAudio) {
+            ttsAudio.play().then(() => ttsAudio.pause()).catch(() => {});
+        }
+    }
     document.addEventListener('touchstart', unlockIOSAudio, { passive: true });
     document.addEventListener('click', unlockIOSAudio, { passive: true });
 
-    // Play synthesized speech audio from Base64 via Blob URL
     function playTTSAudio(base64Audio) {
-        if (!base64Audio) {
-            console.warn("No base64 audio provided to playTTSAudio");
-            return;
-        }
+        if (!base64Audio) return;
         lastAudioBase64 = base64Audio;
-        
         try {
             const binaryString = atob(base64Audio);
-            const len = binaryString.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-            }
-            
-            if (lastAudioBlobUrl) {
-                URL.revokeObjectURL(lastAudioBlobUrl);
-            }
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+            if (lastAudioBlobUrl) URL.revokeObjectURL(lastAudioBlobUrl);
             const blob = new Blob([bytes], { type: 'audio/mpeg' });
             lastAudioBlobUrl = URL.createObjectURL(blob);
-            
             ttsAudio.pause();
             ttsAudio.src = lastAudioBlobUrl;
-            ttsAudio.currentTime = 0;
-            
-            const p = ttsAudio.play();
-            if (p !== undefined) {
-                p.then(() => {
-                    audioIndicator.textContent = "🔊 Playing Audio...";
-                    audioIndicator.style.color = "#00f0ff";
-                    ttsAudio.onended = () => {
-                        audioIndicator.textContent = "🔊 Speaker Active";
-                        audioIndicator.style.color = "var(--success)";
-                    };
-                }).catch(async (err) => {
-                    console.warn("HTML5 audio play blocked, falling back to Web Audio API:", err);
-                    audioIndicator.textContent = "🔊 Tap Here to Hear";
-                    audioIndicator.style.color = "#ffaa00";
-                    // Fallback Web Audio API
-                    try {
-                        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                        if (audioCtx.state === 'suspended') await audioCtx.resume();
-                        const bufferCopy = bytes.buffer.slice(0);
-                        audioCtx.decodeAudioData(bufferCopy, (decodedBuffer) => {
-                            const src = audioCtx.createBufferSource();
-                            src.buffer = decodedBuffer;
-                            src.connect(audioCtx.destination);
-                            src.start(0);
-                            audioIndicator.textContent = "🔊 Playing Audio...";
-                            audioIndicator.style.color = "#00f0ff";
-                            src.onended = () => {
-                                audioIndicator.textContent = "🔊 Speaker Active";
-                                audioIndicator.style.color = "var(--success)";
-                            };
-                        }, (e) => {
-                            console.error("decodeAudioData error:", e);
-                        });
-                    } catch (e2) {
-                        console.error("Web Audio fallback error:", e2);
-                    }
-                });
-            }
-        } catch (err) {
-            console.error("playTTSAudio general error:", err);
+            setAgentState("SPEAKING");
+            ttsAudio.play().then(() => {
+                audioIndicator.textContent = "🔊 Playing Audio...";
+                ttsAudio.onended = () => {
+                    audioIndicator.textContent = "🔊 Speaker Active";
+                    setAgentState("IDLE");
+                };
+            }).catch(() => {
+                setAgentState("IDLE");
+            });
+        } catch (e) {
+            console.error("Audio playback error:", e);
         }
     }
 
     function replayLastAudio() {
+        if (lastAudioBase64) playTTSAudio(lastAudioBase64);
+    }
+
+    // Live Voice Dictation in Input Bar
+    async function toggleTextDictation() {
         unlockIOSAudio();
-        if (lastAudioBase64) {
-            playTTSAudio(lastAudioBase64);
-        } else if (lastAudioBlobUrl) {
-            ttsAudio.src = lastAudioBlobUrl;
-            ttsAudio.play().catch(e => console.log(e));
-        }
-    }
+        if (!isDictating) {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                dictationChunks = [];
+                dictationRecorder = new MediaRecorder(stream);
+                dictationRecorder.ondataavailable = (e) => {
+                    if (e.data.size > 0) dictationChunks.push(e.data);
+                };
+                dictationRecorder.onstop = async () => {
+                    const audioBlob = new Blob(dictationChunks, { type: 'audio/wav' });
+                    dictateLabel.textContent = "Transcribing...";
+                    setAgentState("THINKING");
+                    const formData = new FormData();
+                    formData.append("audio", audioBlob, "dictation.wav");
+                    try {
+                        const res = await fetch("/api/dictate_stt", { method: "POST", body: formData });
+                        const data = await res.json();
+                        if (data.status === "success" && data.text) {
+                            const curr = cmdInput.value.trim();
+                            cmdInput.value = curr ? `${curr} ${data.text}` : data.text;
+                            addTerminalLog("Dictation", `Recognized: "${data.text}"`, "tool");
+                        }
+                    } catch (err) {
+                        console.error("Dictation error:", err);
+                    }
+                    dictateLabel.textContent = "Mic";
+                    dictateBtn.classList.remove('active');
+                    isDictating = false;
+                    setAgentState("IDLE");
+                    stream.getTracks().forEach(t => t.stop());
+                };
 
-    // Toggle Desktop Screen Live Image
-    function toggleScreen() {
-        const container = document.getElementById('screen-container');
-        if (container.style.display === 'flex') {
-            container.style.display = 'none';
-        } else {
-            refreshScreen();
-            container.style.display = 'flex';
-            setTimeout(() => { container.scrollIntoView({ behavior: 'smooth' }); }, 150);
-        }
-    }
-
-    function refreshScreen() {
-        const screenImg = document.getElementById('desktop-screen-img');
-        const statusText = document.getElementById('screen-status-text');
-        statusText.textContent = "⏳ Capturing Desktop...";
-        const newImg = new Image();
-        newImg.onload = () => {
-            screenImg.src = newImg.src;
-            statusText.textContent = "🖥️ Live Desktop (" + new Date().toLocaleTimeString() + ")";
-        };
-        newImg.onerror = () => {
-            statusText.textContent = "❌ Capture failed (PC locked or asleep)";
-        };
-        newImg.src = "/api/screenshot?t=" + new Date().getTime();
-    }
-
-    // Start / Stop Microphone Recording
-    micBtn.addEventListener('click', async () => {
-        unlockIOSAudio();
-        if (!isRecording) {
-            startRecording();
-        } else {
-            stopRecording();
-        }
-    });
-
-    async function startRecording() {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            audioChunks = [];
-            
-            // Prefer WAV/WebM container
-            let options = {};
-            if (MediaRecorder.isTypeSupported('audio/webm')) {
-                options = { mimeType: 'audio/webm' };
+                dictationRecorder.start();
+                isDictating = true;
+                dictateBtn.classList.add('active');
+                dictateLabel.textContent = "Stop";
+                setAgentState("DICTATING");
+                addTerminalLog("Dictation", "Listening... Speak in English or Urdu", "sys");
+            } catch (err) {
+                alert("Microphone permission required: " + err);
             }
-            
-            mediaRecorder = new MediaRecorder(stream, options);
-            mediaRecorder.ondataavailable = event => {
-                if (event.data.size > 0) audioChunks.push(event.data);
-            };
-
-            mediaRecorder.onstop = async () => {
-                const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/wav' });
-                stream.getTracks().forEach(track => track.stop());
-                await uploadVoiceCommand(audioBlob);
-            };
-
-            mediaRecorder.start();
-            isRecording = true;
-            micWrapper.classList.add('recording');
-            voiceLabel.textContent = "Listening... Tap to Send";
-            voiceLabel.classList.add('active');
-        } catch (err) {
-            alert("Microphone access permission required on iPhone: " + err);
-        }
-    }
-
-    function stopRecording() {
-        if (mediaRecorder && isRecording) {
-            mediaRecorder.stop();
-            isRecording = false;
-            micWrapper.classList.remove('recording');
-            voiceLabel.textContent = "Processing Command...";
-            voiceLabel.classList.remove('active');
-        }
-    }
-
-    async function uploadVoiceCommand(blob) {
-        const formData = new FormData();
-        formData.append("audio", blob, "voice.wav");
-
-        try {
-            userTranscript.textContent = "Transcribing audio from iPhone...";
-            zenReplyText.textContent = "ZEN is thinking...";
-
-            const res = await fetch("/api/voice_command", {
-                method: "POST",
-                body: formData
-            });
-            const data = await res.json();
-
-            if (data.status === "success") {
-                userTranscript.textContent = "🗣️ " + data.transcription;
-                zenReplyText.textContent = "⚡ " + data.reply_text;
-                voiceLabel.textContent = "Tap to Speak with ZEN";
-                if (data.audio_base64) {
-                    playTTSAudio(data.audio_base64);
-                }
-            } else {
-                zenReplyText.textContent = "❌ " + data.reply_text;
-                voiceLabel.textContent = "Tap to Speak with ZEN";
+        } else {
+            if (dictationRecorder && isDictating) {
+                dictationRecorder.stop();
             }
-        } catch (e) {
-            zenReplyText.textContent = "Network Error: " + e;
-            voiceLabel.textContent = "Tap to Speak with ZEN";
         }
     }
 
+    // Send Text Message
     async function sendTextMessage(e) {
         e.preventDefault();
         unlockIOSAudio();
-        const input = document.getElementById('cmd-input');
-        const text = input.value.trim();
+        const text = cmdInput.value.trim();
         if (!text) return;
-        input.value = "";
+        cmdInput.value = "";
 
+        const cardId = addChatCard(text);
+        addTerminalLog("You", text, "user");
         userTranscript.textContent = "⌨️ " + text;
-        zenReplyText.textContent = "ZEN is executing...";
+        zenReplyText.textContent = "ZEN executing...";
+        setAgentState("THINKING");
 
         try {
             const res = await fetch("/api/text_command", {
@@ -1016,37 +1592,34 @@ async def mobile_portal_ui():
             const data = await res.json();
             if (data.status === "success") {
                 zenReplyText.textContent = "⚡ " + data.reply_text;
+                addTerminalLog("ZEN", data.reply_text, "zen");
+                updateChatCard(cardId, data.reply_text);
                 if (data.audio_base64) {
                     playTTSAudio(data.audio_base64);
+                } else {
+                    setAgentState("IDLE");
                 }
+            } else {
+                zenReplyText.textContent = "❌ " + data.reply_text;
+                addTerminalLog("Error", data.reply_text, "err");
+                updateChatCard(cardId, data.reply_text);
+                setAgentState("IDLE");
             }
         } catch (err) {
             zenReplyText.textContent = "Error: " + err;
+            addTerminalLog("Error", String(err), "err");
+            updateChatCard(cardId, String(err));
+            setAgentState("IDLE");
         }
     }
 
-    let isDisplayOn = true;
-
-    async function toggleDisplayPower() {
-        unlockIOSAudio();
-        const btn = document.getElementById('display-toggle-btn');
-        isDisplayOn = !isDisplayOn;
-        if (!isDisplayOn) {
-            btn.innerHTML = '🌑 Display: BLACK (Tap to Wake)';
-            btn.style.background = 'linear-gradient(135deg, rgba(121, 40, 202, 0.35), rgba(16, 22, 34, 0.8))';
-            btn.style.borderColor = 'rgba(121, 40, 202, 0.6)';
-            triggerAction('screen_off');
-        } else {
-            btn.innerHTML = '🖥️ Display: ON (Tap to Black)';
-            btn.style.background = 'linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(121, 40, 202, 0.15))';
-            btn.style.borderColor = 'rgba(0, 240, 255, 0.4)';
-            triggerAction('wake_screen');
-        }
-    }
-
+    // Quick Actions
     async function triggerAction(actionName) {
         unlockIOSAudio();
+        const cardId = addChatCard(`Action: ${actionName}`);
+        addTerminalLog("Action", `Triggering ${actionName}`, "tool");
         zenReplyText.textContent = "Executing " + actionName + "...";
+        setAgentState("THINKING");
         try {
             const res = await fetch("/api/quick_action", {
                 method: "POST",
@@ -1055,44 +1628,76 @@ async def mobile_portal_ui():
             });
             const data = await res.json();
             zenReplyText.textContent = "⚡ " + data.message;
-            if (data.display_state) {
-                const btn = document.getElementById('display-toggle-btn');
-                if (data.display_state === 'off') {
-                    isDisplayOn = false;
-                    btn.innerHTML = '🌑 Display: BLACK (Tap to Wake)';
-                    btn.style.background = 'linear-gradient(135deg, rgba(121, 40, 202, 0.35), rgba(16, 22, 34, 0.8))';
-                    btn.style.borderColor = 'rgba(121, 40, 202, 0.6)';
-                } else {
-                    isDisplayOn = true;
-                    btn.innerHTML = '🖥️ Display: ON (Tap to Black)';
-                    btn.style.background = 'linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(121, 40, 202, 0.15))';
-                    btn.style.borderColor = 'rgba(0, 240, 255, 0.4)';
-                }
-            }
+            addTerminalLog("ZEN", data.message, "zen");
+            updateChatCard(cardId, data.message);
             if (data.audio_base64) {
                 playTTSAudio(data.audio_base64);
+            } else {
+                setAgentState("IDLE");
             }
-        } catch (e) {
-            zenReplyText.textContent = "Error: " + e;
+        } catch (err) {
+            zenReplyText.textContent = "Error: " + err;
+            setAgentState("IDLE");
         }
     }
 
-    function confirmShutdown() {
+    let isDisplayOn = true;
+    async function toggleDisplayPower() {
         unlockIOSAudio();
-        const modal = document.getElementById('shutdown-modal');
-        if (modal) modal.style.display = 'flex';
+        const btn = document.getElementById('display-toggle-btn');
+        isDisplayOn = !isDisplayOn;
+        if (!isDisplayOn) {
+            btn.innerHTML = '🌑 Display: BLACK (Tap to Wake)';
+            triggerAction('screen_off');
+        } else {
+            btn.innerHTML = '🖥️ Display: ON (Tap to Black)';
+            triggerAction('wake_screen');
+        }
     }
 
+    function toggleScreen() {
+        const sc = document.getElementById('screen-container');
+        if (sc.style.display === 'none' || !sc.style.display) {
+            sc.style.display = 'flex';
+            refreshScreen();
+        } else {
+            sc.style.display = 'none';
+        }
+    }
+
+    function refreshScreen() {
+        const img = document.getElementById('desktop-screen-img');
+        img.src = '/api/screen_preview?' + new Date().getTime();
+    }
+
+    function confirmShutdown() {
+        document.getElementById('shutdown-modal').style.display = 'flex';
+    }
     function closeShutdownModal() {
-        const modal = document.getElementById('shutdown-modal');
-        if (modal) modal.style.display = 'none';
+        document.getElementById('shutdown-modal').style.display = 'none';
     }
-
     async function executeShutdown() {
         closeShutdownModal();
-        zenReplyText.textContent = "⚡ Initiating System Shutdown...";
-        await triggerAction('shutdown');
+        triggerAction('shutdown');
     }
+
+    // Telemetry Poller
+    async function pollVitals() {
+        try {
+            const res = await fetch('/api/system_vitals');
+            const data = await res.json();
+            if (data.status === 'success') {
+                document.getElementById('cpu-val').textContent = Math.round(data.cpu) + '%';
+                document.getElementById('cpu-fill').style.width = Math.min(100, data.cpu) + '%';
+                document.getElementById('ram-val').textContent = Math.round(data.ram) + '%';
+                document.getElementById('ram-fill').style.width = Math.min(100, data.ram) + '%';
+                const plugIcon = data.plugged ? '⚡' : '🔋';
+                document.getElementById('batt-val').textContent = data.battery + '% ' + plugIcon;
+            }
+        } catch (e) {}
+        setTimeout(pollVitals, 3000);
+    }
+    pollVitals();
 </script>
 </body>
 </html>

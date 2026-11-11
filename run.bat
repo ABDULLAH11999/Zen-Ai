@@ -24,7 +24,7 @@ start "ZEN Mobile Web Portal (Port 5050)" cmd /k "cd /d "%~dp0" && color 0a && t
 
 timeout /t 2 /nobreak >nul
 
-echo [2/2] Starting Desktop AI Assistant & Voice Engine (GUI)...
+echo [2/2] Starting Desktop AI Assistant ^& Voice Engine (GUI)...
 echo.
 set PYTHONIOENCODING=utf-8
 "C:\laragon\bin\python\python-3.13\python.exe" main.py

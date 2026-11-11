@@ -3,7 +3,7 @@ import threading
 import sys
 import queue
 import time
-from typing import Optional
+from typing import Optional, Callable
 
 if sys.platform == "win32":
     try:
@@ -38,7 +38,8 @@ class JarvisOrchestrator:
         self.gui = JarvisGUI(
             on_toggle_monitoring=self.on_toggle_monitoring,
             on_send_text=self.on_send_text,
-            on_reset_context=self.on_reset_context
+            on_reset_context=self.on_reset_context,
+            on_dictate_speech=self.on_dictate_speech
         )
         
         # Worker threads
@@ -84,6 +85,34 @@ class JarvisOrchestrator:
         """Dispatches typed query to agent processing queue."""
         self.last_interaction_time = time.time()
         self.task_queue.put(text)
+
+    def on_dictate_speech(
+        self,
+        stop_event: threading.Event,
+        on_text_chunk: Callable[[str], None],
+        on_status: Callable[[str], None]
+    ):
+        """Continuously listens to microphone and streams transcribed Roman Urdu / English text into the entry box."""
+        logger.info("Live dictation mode active.")
+        while not stop_event.is_set() and self.is_running:
+            try:
+                on_status("LISTENING")
+                audio_data = self.audio_engine.record_dictation_sample(
+                    stop_event=stop_event,
+                    on_speech_start=lambda: on_status("LISTENING")
+                )
+                if stop_event.is_set():
+                    break
+                if len(audio_data) == 0:
+                    continue
+                on_status("TRANSCRIBING")
+                text = self.audio_engine.dictate_speech_to_roman_urdu(audio_data)
+                if text:
+                    logger.info(f"Dictation transcribed: '{text}'")
+                    on_text_chunk(text)
+            except Exception as e:
+                logger.error(f"Error in dictation thread: {e}")
+                time.sleep(0.5)
 
     def _voice_listener_loop(self):
         """Continuous background microphone listener loop with Voiceprint Verification & Wake-word handling."""
@@ -148,6 +177,7 @@ class JarvisOrchestrator:
                 if command:
                     self.last_interaction_time = time.time()
                     self.gui.append_log("You (Voice)", transcription, tag="user")
+                    self.gui.add_chat_card(prompt=command)
                     self.task_queue.put(command)
                 else:
                     self.gui.set_status("IDLE")
@@ -175,7 +205,8 @@ class JarvisOrchestrator:
                     on_tool_event=lambda msg: self.gui.append_log("Tool", msg, tag="tool")
                 )
                 
-                # Log Response
+                # Log Response and complete chat card
+                self.gui.notify_chat_completed(response_text)
                 self.gui.append_log("ZEN", response_text, tag="jarvis")
                 
                 # Speak response if not muted

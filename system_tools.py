@@ -242,7 +242,7 @@ def check_windows_updates() -> Dict[str, Any]:
             "-Command",
             "$s = New-Object -ComObject Microsoft.Update.Session; $searcher = $s.CreateUpdateSearcher(); $res = $searcher.Search(\"IsInstalled=0 and Type='Software'\"); $titles = @($res.Updates | ForEach-Object { $_.Title }); @{'count' = $titles.Count; 'updates' = $titles} | ConvertTo-Json -Compress"
         ]
-        res = subprocess.run(ps_cmd, capture_output=True, text=True, timeout=35)
+        res = subprocess.run(ps_cmd, capture_output=True, text=True, timeout=5)
         if res.returncode == 0 and res.stdout.strip():
             import json
             data = json.loads(res.stdout.strip())

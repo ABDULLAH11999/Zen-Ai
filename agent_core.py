@@ -124,7 +124,7 @@ class JarvisAgent:
                     "type": "function",
                     "function": {
                         "name": "check_windows_updates",
-                        "description": "Checks Windows for pending system updates.",
+                        "description": "Checks Windows for pending software/OS updates. ONLY call when user explicitly asks about Windows system update (e.g. 'windows update check karo'). NEVER call for brightness, screen light, volume, power, or apps.",
                         "parameters": {"type": "object", "properties": {}}
                     }
                 },
@@ -245,7 +245,7 @@ class JarvisAgent:
                     "type": "function",
                     "function": {
                         "name": "manage_display_brightness",
-                        "description": "Adjusts laptop display/screen brightness from 0 to 100 percent. Call when user asks 'brightness 10 kardo', 'brightness barha do', 'screen light kam karo', etc.",
+                        "description": "Adjusts laptop display/screen brightness from 0 to 100 percent. Call IMMEDIATELY when user asks 'set brightness to 25%', 'brightness 10 kardo', 'brightness barha do', 'screen light kam karo', 'screen roshni kam/zyada karo', etc.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -669,6 +669,78 @@ class JarvisAgent:
         needs_vision = any(trigger in lower_prompt for trigger in vision_triggers)
         
         # Zero-latency immediate intent triggers (<20ms)
+        # 1. Display Brightness Immediate Control
+        if any(w in lower_prompt for w in ["brightness", "roshni", "screen light", "display light"]):
+            import re
+            m = re.search(r"(\d+)\s*%?", lower_prompt)
+            level = int(m.group(1)) if m else None
+            action = "set"
+            if any(w in lower_prompt for w in ["barha", "increase", "up", "tez", "more", "zyada"]):
+                action = "increase"
+            elif any(w in lower_prompt for w in ["kam", "decrease", "down", "ghata", "low", "less"]):
+                action = "decrease"
+            elif any(w in lower_prompt for w in ["full", "max", "maximum", "100"]):
+                action = "max"
+            elif any(w in lower_prompt for w in ["min", "minimum", "zero"]):
+                action = "min"
+            if on_tool_event:
+                on_tool_event(f"Executing: manage_display_brightness(level={level}, action='{action}')")
+            res = TOOL_REGISTRY["manage_display_brightness"](level=level, action=action)
+            return res.get("spoken_summary", res.get("message", f"Sir, display brightness {level or 50}% par set kardi hai."))
+
+        # 2. Master Audio Volume Immediate Control
+        if any(w in lower_prompt for w in ["volume", "sound", "awaz", "awaaz"]) and not any(w in lower_prompt for w in ["voice profile", "record voice"]):
+            import re
+            m = re.search(r"(\d+)\s*%?", lower_prompt)
+            level = int(m.group(1)) if m else None
+            action = "status"
+            if any(w in lower_prompt for w in ["mute", "band", "chup", "silent"]):
+                action = "mute"
+            elif any(w in lower_prompt for w in ["unmute", "kholo", "on"]):
+                action = "unmute"
+            elif any(w in lower_prompt for w in ["barha", "increase", "up", "tez", "zyada"]):
+                action = "up"
+            elif any(w in lower_prompt for w in ["kam", "decrease", "down", "low", "ghata"]):
+                action = "down"
+            elif level is not None or any(w in lower_prompt for w in ["set", "kardo", "rakho"]):
+                action = "set"
+            if on_tool_event:
+                on_tool_event(f"Executing: manage_system_volume(action='{action}', level_percent={level})")
+            res = TOOL_REGISTRY["manage_system_volume"](action=action, level_percent=level)
+            return res.get("spoken_summary", res.get("message", "Sir, master volume adjust kardiya hai."))
+
+        # 3. Battery & Power Status
+        if any(w in lower_prompt for w in ["battery", "charging", "charge kitna", "battery kitni", "kitna charge"]):
+            if on_tool_event:
+                on_tool_event("Executing: get_system_status()")
+            res = TOOL_REGISTRY["get_system_status"]()
+            batt_p = res.get("battery_percent")
+            is_p = res.get("battery_plugged", True)
+            p_str = "charging par laga hai" if is_p else "battery par chal raha hai"
+            if batt_p is not None:
+                return f"Sir, system ki battery {batt_p}% hai aur {p_str}."
+            return res.get("spoken_summary", res.get("message", "Sir, system battery check karli hai."))
+
+        # 4. Display Screen Power (Black screen without locking or Wake screen)
+        if any(w in lower_prompt for w in ["screen off", "display off", "black screen", "display band", "screen band"]) and not any(w in lower_prompt for w in ["on", "kholo", "chalao"]):
+            if on_tool_event:
+                on_tool_event("Executing: manage_screen_power(action='off')")
+            res = TOOL_REGISTRY["manage_screen_power"](action="off")
+            return res.get("message", "Sir, screen off kardi hai, apps background mein active hain.")
+
+        if any(w in lower_prompt for w in ["screen on", "display on", "screen wake", "display wake"]):
+            if on_tool_event:
+                on_tool_event("Executing: manage_screen_power(action='on')")
+            res = TOOL_REGISTRY["manage_screen_power"](action="on")
+            return res.get("message", "Sir, display on kardi hai.")
+
+        # 5. Workstation Unlock
+        if any(w in lower_prompt for w in ["unlock", "pin dalo", "pin lagao", "un lock"]):
+            if on_tool_event:
+                on_tool_event("Executing: unlock_workstation()")
+            res = TOOL_REGISTRY["unlock_workstation"]()
+            return res.get("message", "Jee Sir, aapka system unlock kardiya hai.")
+
         if any(g in lower_prompt for g in ["gta 5", "gta v", "gta5", "gtav", "playgtav", "grand theft auto"]) and any(act in lower_prompt for act in ["launch", "open", "kholo", "lga", "laga", "chala", "run", "play"]):
             res = TOOL_REGISTRY["open_url_or_application"](target="gta 5")
             return res.get("message", "Sir, GTA V PlayGTAV.exe ke zariye launch kardiya hai.")

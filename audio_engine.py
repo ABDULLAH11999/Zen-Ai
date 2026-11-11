@@ -234,6 +234,94 @@ class AudioEngine:
             logger.error(f"Whisper transcription error: {whisper_err}")
             return ""
 
+    def dictate_speech_to_roman_urdu(self, audio_data: np.ndarray) -> str:
+        """
+        Transcribes speech for live input field dictation:
+        - Speaks English -> types in English
+        - Speaks Urdu -> types in Roman Urdu using English alphabets (e.g. 'kya haal he', 'brightness 25 kardo')
+        """
+        if len(audio_data) == 0:
+            return ""
+
+        # Normalize and convert to 16-bit PCM
+        audio_norm = audio_data.astype(np.float32)
+        max_val = np.max(np.abs(audio_norm))
+        if max_val > 0:
+            audio_norm = audio_norm / max_val
+        int16_data = (audio_norm * 32767).astype(np.int16)
+
+        text = ""
+        # 1. Groq Cloud Whisper with Roman Urdu guidance
+        if config.GROQ_API_KEY:
+            try:
+                from groq import Groq
+                import scipy.io.wavfile as wavfile
+                client = Groq(api_key=config.GROQ_API_KEY, timeout=5.0)
+
+                buf = io.BytesIO()
+                wavfile.write(buf, self.sample_rate, int16_data)
+                wav_bytes = buf.getvalue()
+
+                prompt_guide = (
+                    "Transcribe speech accurately. If speech is in English, transcribe in standard English. "
+                    "If speech is in Urdu or Hindi, transcribe strictly in Roman Urdu using English alphabets (Latin characters), "
+                    "e.g.: kya haal he, brightness 25 kardo, system status batao, chrome open karo, scalper bot check karo."
+                )
+
+                transcription = client.audio.transcriptions.create(
+                    file=("dictation.wav", wav_bytes, "audio/wav"),
+                    model="whisper-large-v3-turbo",
+                    prompt=prompt_guide,
+                    temperature=0.0
+                )
+                if transcription and transcription.text:
+                    text = transcription.text.strip()
+            except Exception as e:
+                logger.debug(f"Groq dictation Whisper error: {e}")
+
+        # 2. Fallback to transcribe_audio_array
+        if not text:
+            text = self.transcribe_audio_array(audio_data)
+
+        if not text:
+            return ""
+
+        # Filter out common silence hallucinations
+        hallucinations = [
+            "thank you.", "thank you", "gracias.", "gracias", "bye, jujo.", "bye.",
+            "subscribe", "thanks for watching.", "aap kaise hain sir."
+        ]
+        if text.lower() in hallucinations:
+            return ""
+
+        # 3. If any Urdu/Arabic script or Devanagari is present, transliterate to Roman Urdu (English alphabet)
+        has_non_latin = any(('\u0600' <= c <= '\u06FF') or ('\u0900' <= c <= '\u097F') for c in text)
+        if has_non_latin and config.GROQ_API_KEY:
+            try:
+                from groq import Groq
+                import re
+                client = Groq(api_key=config.GROQ_API_KEY, timeout=4.0)
+                resp = client.chat.completions.create(
+                    model=config.GROQ_MODEL,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a transliterator. Transliterate Urdu or Hindi text into natural Roman Urdu using standard English alphabet (e.g. 'kya haal he', 'brightness 25 kardo'). Keep English words in English. Return ONLY the Roman Urdu text without explanations or quotes."
+                        },
+                        {"role": "user", "content": text}
+                    ],
+                    temperature=0.0,
+                    max_tokens=80
+                )
+                roman = resp.choices[0].message.content.strip()
+                roman = re.sub(r"<think>.*?</think>", "", roman, flags=re.DOTALL).strip('\"\' ')
+                if roman:
+                    text = roman
+            except Exception as tr_err:
+                logger.debug(f"Transliteration error: {tr_err}")
+
+        return text.strip()
+
     def extract_wake_command(self, transcription: str, is_active_session: bool = False) -> Optional[str]:
         """
         Detects wake words or active follow-up action intent.
@@ -317,6 +405,54 @@ class AudioEngine:
                         
                     # Max safety cutoff
                     if elapsed > self.max_duration:
+                        break
+                        
+        if audio_chunks:
+            return np.concatenate(audio_chunks, axis=0)
+        return np.array([], dtype=np.float32)
+
+    def record_dictation_sample(self, stop_event: Optional[threading.Event] = None, on_speech_start: Optional[Callable] = None) -> np.ndarray:
+        """
+        Records a speech phrase for text dictation.
+        Stops as soon as user pauses/finishes sentence, or when stop_event is set.
+        """
+        block_duration = 0.05
+        block_size = int(self.sample_rate * block_duration)
+        min_speech_duration = 0.6
+        
+        audio_chunks = []
+        is_speech_active = False
+        silence_start_time = None
+        record_start_time = None
+        
+        with sd.InputStream(samplerate=self.sample_rate, channels=1, dtype='float32', blocksize=block_size) as stream:
+            while not self._stop_listener_event.is_set():
+                if stop_event and stop_event.is_set():
+                    break
+                data, overflowed = stream.read(block_size)
+                chunk = data.flatten()
+                rms = np.sqrt(np.mean(chunk**2)) * 32768
+                
+                if not is_speech_active:
+                    if rms > self.energy_threshold:
+                        is_speech_active = True
+                        record_start_time = time.time()
+                        silence_start_time = None
+                        audio_chunks = [chunk]
+                        if on_speech_start:
+                            on_speech_start()
+                else:
+                    audio_chunks.append(chunk)
+                    elapsed = time.time() - record_start_time
+                    if rms < self.energy_threshold:
+                        if silence_start_time is None:
+                            silence_start_time = time.time()
+                        elif (time.time() - silence_start_time > 0.8) and (elapsed >= min_speech_duration):
+                            break
+                    else:
+                        silence_start_time = None
+                        
+                    if elapsed > 15.0:
                         break
                         
         if audio_chunks:
